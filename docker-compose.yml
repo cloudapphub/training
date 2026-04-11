@@ -1,0 +1,7 @@
+services:
+  training:
+    build: .
+    container_name: training-portal
+    ports:
+      - "3000:80"
+    restart: unless-stopped
