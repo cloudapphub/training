@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes } from "lucide-react";
+import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield } from "lucide-react";
 
 const courses = [
   {
@@ -114,6 +114,20 @@ const courses = [
     gradient: "from-blue-500 via-sky-500 to-cyan-500",
     glowColor: "rgba(14,165,233,0.15)",
     tags: ["EKS", "Managed Nodes", "Karpenter", "IRSA", "VPC CNI", "Security"],
+  },
+  {
+    id: "hsm-swift",
+    path: "/hsm-swift",
+    title: "HSM & SWIFT Payments",
+    subtitle: "Cross-Border Payment Security",
+    description:
+      "Ten hours covering HSM architecture, PKCS#11, key ceremonies, SWIFT infrastructure (SAA/SAG/SNL), XML Digital Signatures, three cryptographic layers, and hands-on SoftHSM2 signing.",
+    duration: "10 hours",
+    lessons: 10,
+    icon: Shield,
+    gradient: "from-cyan-500 via-teal-500 to-emerald-500",
+    glowColor: "rgba(20,184,166,0.15)",
+    tags: ["HSM", "SWIFT", "PKCS#11", "XMLDSig", "pacs.008", "Cryptography"],
   },
 ];
 

@@ -8,6 +8,7 @@ import SpringBootEKS from './SpringBootEKS'
 import TerraformHCL from './TerraformHCL'
 import GenAILLM from './GenAILLM'
 import EksManagedNodes from './EksManagedNodes'
+import HsmSwiftTraining from './HsmSwiftTraining'
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
       <Route path="/terraform-hcl" element={<TerraformHCL />} />
       <Route path="/genai-llm" element={<GenAILLM />} />
       <Route path="/eks-managed-nodes" element={<EksManagedNodes />} />
+      <Route path="/hsm-swift" element={<HsmSwiftTraining />} />
     </Routes>
   )
 }
