@@ -13,6 +13,7 @@ import LangGraphTraining from './LangGraphTraining'
 import AgenticCommerceTraining from './AgenticCommerceTraining'
 import ReactTraining from './ReactTraining'
 import JavaTraining from './JavaTraining'
+import AngularTraining from './AngularTraining'
 
 export default function App() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
       <Route path="/agentic-commerce" element={<AgenticCommerceTraining />} />
       <Route path="/react" element={<ReactTraining />} />
       <Route path="/core-java" element={<JavaTraining />} />
+      <Route path="/angular" element={<AngularTraining />} />
     </Routes>
   )
 }

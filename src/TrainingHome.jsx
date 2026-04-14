@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag } from "lucide-react";
+import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag, Layers } from "lucide-react";
 
 const courses = [
   {
@@ -184,6 +184,20 @@ const courses = [
     gradient: "from-amber-500 via-orange-500 to-red-500",
     glowColor: "rgba(245,158,11,0.15)",
     tags: ["Java 21", "OOP", "Streams", "Concurrency", "Virtual Threads", "Records"],
+  },
+  {
+    id: "angular",
+    path: "/angular",
+    title: "Angular",
+    subtitle: "Enterprise-Grade Mastery",
+    description:
+      "Twelve hours mastering Angular 17+ — standalone components, TypeScript, signals, reactive forms, RxJS, services & dependency injection, routing & guards, pipes, directives, change detection, state management, testing with Jasmine/Karma, production deployment with Docker, and full-stack integration with Spring Boot.",
+    duration: "12 hours",
+    lessons: 12,
+    icon: Layers,
+    gradient: "from-red-500 via-rose-500 to-fuchsia-500",
+    glowColor: "rgba(239,68,68,0.15)",
+    tags: ["Angular 17", "TypeScript", "RxJS", "Signals", "Spring Boot", "Docker"],
   },
 ];
 
