@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield } from "lucide-react";
+import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag } from "lucide-react";
 
 const courses = [
   {
@@ -128,6 +128,62 @@ const courses = [
     gradient: "from-cyan-500 via-teal-500 to-emerald-500",
     glowColor: "rgba(20,184,166,0.15)",
     tags: ["HSM", "SWIFT", "PKCS#11", "XMLDSig", "pacs.008", "Cryptography"],
+  },
+  {
+    id: "langgraph",
+    path: "/langgraph",
+    title: "LangGraph Agents",
+    subtitle: "Stateful AI Workflows",
+    description:
+      "Ten hours mastering LangGraph — StateGraph, reducers, conditional routing, ReAct tool calling, checkpointing, human-in-the-loop, streaming, error handling, map-reduce with Send, and production deployment.",
+    duration: "10 hours",
+    lessons: 10,
+    icon: Workflow,
+    gradient: "from-violet-500 via-fuchsia-500 to-pink-500",
+    glowColor: "rgba(139,92,246,0.15)",
+    tags: ["LangGraph", "Agents", "StateGraph", "HITL", "Streaming", "Tools"],
+  },
+  {
+    id: "agentic-commerce",
+    path: "/agentic-commerce",
+    title: "Agentic Commerce",
+    subtitle: "AI-Driven Shopping & Procurement",
+    description:
+      "Ten hours mastering Agentic Commerce — ACP, UCP, MCP & A2A protocols, Stripe tokenized payments (SPTs), Shopify Agentic Storefronts, shopping agents, hyper-personalization, B2B procurement automation, agent-ready SEO, trust & security, and ROI strategy.",
+    duration: "10 hours",
+    lessons: 10,
+    icon: ShoppingBag,
+    gradient: "from-emerald-500 via-amber-500 to-orange-500",
+    glowColor: "rgba(16,185,129,0.15)",
+    tags: ["ACP", "UCP", "MCP", "Stripe SPT", "Shopify", "B2B Procurement"],
+  },
+  {
+    id: "react",
+    path: "/react",
+    title: "React 19",
+    subtitle: "Complete Modern Development Guide",
+    description:
+      "Ten hours mastering React 19 — JSX, hooks (useState, useReducer, useEffect, useContext), React 19 APIs (useActionState, useOptimistic, use), routing, performance, Server Components, production Vite+TypeScript setup, and backend integration with Spring Boot, FastAPI & Docker Compose.",
+    duration: "10 hours",
+    lessons: 10,
+    icon: Code2,
+    gradient: "from-cyan-500 via-blue-500 to-indigo-500",
+    glowColor: "rgba(6,182,212,0.15)",
+    tags: ["React 19", "Hooks", "RSC", "Vite", "TypeScript", "TanStack Query"],
+  },
+  {
+    id: "core-java",
+    path: "/core-java",
+    title: "Core Java",
+    subtitle: "Production-Grade Mastery",
+    description:
+      "Ten hours mastering Java 21+ — JVM internals, OOP, records, sealed classes, generics, collections, Streams API, functional programming, CompletableFuture, virtual threads, java.time, NIO, Optional, and modern best practices.",
+    duration: "10 hours",
+    lessons: 10,
+    icon: FileCode,
+    gradient: "from-amber-500 via-orange-500 to-red-500",
+    glowColor: "rgba(245,158,11,0.15)",
+    tags: ["Java 21", "OOP", "Streams", "Concurrency", "Virtual Threads", "Records"],
   },
 ];
 

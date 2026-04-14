@@ -9,6 +9,10 @@ import TerraformHCL from './TerraformHCL'
 import GenAILLM from './GenAILLM'
 import EksManagedNodes from './EksManagedNodes'
 import HsmSwiftTraining from './HsmSwiftTraining'
+import LangGraphTraining from './LangGraphTraining'
+import AgenticCommerceTraining from './AgenticCommerceTraining'
+import ReactTraining from './ReactTraining'
+import JavaTraining from './JavaTraining'
 
 export default function App() {
   return (
@@ -23,6 +27,10 @@ export default function App() {
       <Route path="/genai-llm" element={<GenAILLM />} />
       <Route path="/eks-managed-nodes" element={<EksManagedNodes />} />
       <Route path="/hsm-swift" element={<HsmSwiftTraining />} />
+      <Route path="/langgraph" element={<LangGraphTraining />} />
+      <Route path="/agentic-commerce" element={<AgenticCommerceTraining />} />
+      <Route path="/react" element={<ReactTraining />} />
+      <Route path="/core-java" element={<JavaTraining />} />
     </Routes>
   )
 }
