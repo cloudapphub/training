@@ -614,83 +614,301 @@ public record CreateOrderRequest(
     time: "Hour 9",
     title: "Spring Security & Keycloak OAuth2 Resource Server",
     concept: [
-      "**Spring Security** intercepts every HTTP request through a chain of **Filters** before it hits your controller. The `SecurityFilterChain` bean defines which URLs need authentication and how tokens are validated. The filter chain includes: `CorsFilter` (CORS), `CsrfFilter` (CSRF protection), `AuthorizationFilter` (URL-level authorization), and `BearerTokenAuthenticationFilter` (JWT extraction and validation). You can add custom filters at specific positions in this chain.",
-      "**OAuth2 Resource Server:** Adding `spring-boot-starter-oauth2-resource-server` tells Spring to expect a `Bearer` JWT in the `Authorization` header. Configure `issuer-uri` to your Keycloak realm. The flow: (1) Client sends `Authorization: Bearer <jwt>` header, (2) Spring extracts the token, (3) Fetches the JWKS (JSON Web Key Set) from `{issuer-uri}/protocol/openid-connect/certs`, (4) Validates the token signature, expiry, and issuer, (5) Creates an `Authentication` object with the token's claims.",
-      "**JWT Validation Details:** Spring validates: (1) **Signature** — using RSA/EC public keys from the JWKS endpoint. (2) **Expiry** (`exp` claim) — rejects expired tokens. (3) **Issuer** (`iss` claim) — must match the configured `issuer-uri`. (4) **Not Before** (`nbf` claim) — token must be valid for current time. The JWKS is cached and refreshed periodically (configurable via `spring.security.oauth2.resourceserver.jwt.jwk-set-cache-lifespan`).",
-      "**Keycloak Role Mapping:** Keycloak puts roles under `realm_access.roles` in the JWT payload. Spring Security defaults to reading `scope` for authorities. You must write a custom `JwtAuthenticationConverter` that extracts Keycloak's realm roles and maps them to Spring `GrantedAuthority` objects prefixed with `ROLE_`. Without this converter, `hasRole('ADMIN')` checks will always fail even if the JWT contains the correct roles.",
-      "**Stateless Sessions:** JWTs are self-contained — all identity and authorization data is inside the token. The server doesn't need sessions. Set `SessionCreationPolicy.STATELESS` and disable CSRF (since we don't use cookies for auth). This means: (1) No session cookies, (2) No server-side session storage, (3) Any API instance can validate any token — horizontal scaling is trivial, (4) Token revocation requires additional infrastructure (token blacklists or short expiry + refresh tokens).",
-      "**Security Debugging:** Enable `logging.level.org.springframework.security=DEBUG` to see the full filter chain execution, which filters pass/reject, and why authentication fails. This is invaluable when diagnosing 401/403 errors. Also check `SecurityContextHolder.getContext().getAuthentication()` in your code to see the current authenticated principal.",
+      "## Step 1: Understanding OAuth2 & OpenID Connect Fundamentals",
+
+      "**OAuth2** is an authorization framework that lets a client (frontend app) access resources on behalf of a user without sharing the user's password. **OpenID Connect (OIDC)** is an identity layer on top of OAuth2 that adds authentication (proving *who* the user is). The key actors: (1) **Resource Owner** = the end user. (2) **Client** = your React/Angular frontend. (3) **Authorization Server** = Keycloak (issues tokens). (4) **Resource Server** = your Spring Boot API (validates tokens and serves data).",
+
+      "**Token Types in OAuth2:** (1) **Access Token (JWT)** — short-lived (5-15 min), sent with every API request in the `Authorization: Bearer <token>` header. Contains user identity, roles, and expiry. (2) **Refresh Token** — long-lived (hours/days), used by the client to get a new access token when the current one expires, without asking the user to log in again. (3) **ID Token** — OIDC-specific, contains user profile info (name, email), used by the frontend only, never sent to the API.",
+
+      "**The OAuth2 Authorization Code Flow (with PKCE):** This is the recommended flow for SPAs and mobile apps. Step-by-step: (1) User clicks 'Login' → frontend redirects to Keycloak's `/auth` endpoint with a `code_challenge`. (2) User enters credentials on Keycloak's login page. (3) Keycloak redirects back to the frontend with an `authorization_code`. (4) Frontend exchanges the code + `code_verifier` for tokens at Keycloak's `/token` endpoint. (5) Frontend stores the access token in memory (never localStorage!) and sends it with every API call. (6) When the access token expires, the frontend uses the refresh token to get a new one silently.",
+
+      "## Step 2: Anatomy of a JWT Token",
+
+      "**JWT Structure:** A JWT has three Base64URL-encoded parts separated by dots: `header.payload.signature`. (1) **Header** — specifies the algorithm (`RS256`) and token type (`JWT`). (2) **Payload** — contains claims (key-value pairs) like `sub` (user ID), `iss` (issuer URL), `exp` (expiry timestamp), `realm_access.roles` (Keycloak roles), `email`, `preferred_username`. (3) **Signature** — created by Keycloak using its private RSA key. The Resource Server verifies it using Keycloak's public key from the JWKS endpoint.",
+
+      "**Decoded JWT Example from Keycloak:** The payload looks like: `{ \"sub\": \"f47ac10b-58cc-4372-a567-0e02b2c3d479\", \"iss\": \"http://keycloak:8080/realms/company-realm\", \"exp\": 1713100800, \"iat\": 1713097200, \"preferred_username\": \"john.doe\", \"email\": \"john@company.com\", \"realm_access\": { \"roles\": [\"USER\", \"MANAGER\"] }, \"resource_access\": { \"my-api\": { \"roles\": [\"order-admin\"] } }, \"scope\": \"openid profile email\" }`. Notice: roles are nested under `realm_access`, NOT at the top level — this is why Spring Security needs a custom converter.",
+
+      "**Why RS256 (Asymmetric) Matters:** Keycloak signs tokens with a **private key** (kept secret on Keycloak). Spring Boot verifies tokens using the **public key** (fetched from the JWKS endpoint). This means your Spring Boot API never needs Keycloak's private key — it only needs the public key. Even if an attacker intercepts the public key, they cannot forge tokens because they don't have the private key.",
+
+      "## Step 3: Spring Security Filter Chain — Request Lifecycle",
+
+      "**How a Request Flows Through Spring Security:** Every HTTP request passes through a chain of ~15 filters in a specific order BEFORE reaching your `@RestController`. Here is the critical path: (1) `CorsFilter` — handles CORS preflight `OPTIONS` requests and adds CORS headers. If the origin isn't allowed, the request is rejected here. (2) `CsrfFilter` — checks CSRF tokens (disabled in stateless JWT setups). (3) `BearerTokenAuthenticationFilter` — extracts the JWT from the `Authorization: Bearer <token>` header. If no header is present, the request continues as anonymous. (4) `JwtDecoder` — validates the token's signature (using JWKS public keys), expiry, issuer, and structure. If validation fails, throws `InvalidBearerTokenException` → 401 response. (5) `JwtAuthenticationConverter` + your custom `KeycloakRoleConverter` — extracts roles from the JWT payload and creates `GrantedAuthority` objects. (6) `AuthorizationFilter` — checks if the authenticated user has the required role/authority for the URL pattern. If not, throws `AccessDeniedException` → 403 response. (7) If all filters pass, the request reaches your controller with a populated `SecurityContext`.",
+
+      "**Key Insight — 401 vs 403:** A **401 Unauthorized** means 'I don't know who you are' — no token was provided, or the token is invalid/expired. A **403 Forbidden** means 'I know who you are, but you don't have permission' — token is valid but lacks the required role. Understanding this distinction is critical for debugging security issues.",
+
+      "## Step 4: Setting Up Keycloak (Authorization Server)",
+
+      "**Keycloak Setup — Step by Step:** (1) **Start Keycloak** via Docker: `docker run -d --name keycloak -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:latest start-dev`. (2) **Create a Realm:** Open `http://localhost:8080/admin`, log in as `admin/admin`, click 'Create realm' → name it `company-realm`. A realm is a tenant — it isolates users, roles, and clients. (3) **Create a Client:** In the realm → Clients → Create → Client ID: `my-spa-app`, Client type: `OpenID Connect`, Root URL: `http://localhost:3000`. Set 'Client authentication' = OFF (public client for SPAs), 'Standard flow' = ON, 'Direct access grants' = ON (for testing with curl). (4) **Create Roles:** Realm roles → Create: `USER`, `ADMIN`, `MANAGER`. (5) **Create Users:** Users → Create → username: `john`, set password, assign roles `USER` + `MANAGER`. Create another: `admin_user` with role `ADMIN`.",
+
+      "**Testing Token Acquisition with curl:** After setup, get a token: `curl -X POST 'http://localhost:8080/realms/company-realm/protocol/openid-connect/token' -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=password&client_id=my-spa-app&username=john&password=secret'`. The response contains `access_token`, `refresh_token`, `expires_in`, and `token_type`. Decode the access token at jwt.io to inspect its claims.",
+
+      "## Step 5: Spring Boot as a Resource Server — Dependencies & Configuration",
+
+      "**Maven Dependencies:** You need exactly two starters: `spring-boot-starter-security` (core Spring Security) and `spring-boot-starter-oauth2-resource-server` (JWT validation). The resource server starter pulls in `spring-security-oauth2-jose` which provides the `JwtDecoder`, `NimbusJwtDecoder`, and RSA key handling. With just these two dependencies and one YAML property (`issuer-uri`), Spring Boot auto-configures a fully functional JWT-validating security layer.",
+
+      "**application.yml Configuration Explained:** The critical property is `spring.security.oauth2.resourceserver.jwt.issuer-uri: http://localhost:8080/realms/company-realm`. When the app starts, Spring fetches `{issuer-uri}/.well-known/openid-configuration` — this returns the JWKS URI, token endpoint, supported grants, and more. Spring then fetches the JWKS (public keys) from `{issuer-uri}/protocol/openid-connect/certs` and caches them. If Keycloak rotates keys, Spring automatically refreshes the JWKS cache.",
+
+      "## Step 6: The SecurityFilterChain Bean — Line-by-Line Walkthrough",
+
+      "**@Configuration + @EnableWebSecurity:** `@Configuration` marks this as a Spring config class. `@EnableWebSecurity` activates Spring Security's web protection and imports the security filter chain infrastructure. `@EnableMethodSecurity` turns on method-level annotations like `@PreAuthorize` (covered in Hour 10).",
+
+      "**Building the SecurityFilterChain:** The `filterChain(HttpSecurity http)` method defines your security rules using a fluent DSL. Each method call configures one aspect: `.cors()` — configures CORS. `.csrf()` — disables CSRF (safe because we don't use cookies for auth). `.sessionManagement()` — sets stateless mode (no server-side sessions). `.authorizeHttpRequests()` — defines URL-level access rules. `.oauth2ResourceServer()` — configures JWT validation with your custom role converter. **Order matters in `authorizeHttpRequests()`** — rules are evaluated top-to-bottom. More specific rules must come before `anyRequest().authenticated()`.",
+
+      "## Step 7: Keycloak Role Converter — Bridging the Gap",
+
+      "**Why a Custom Converter is Required:** Keycloak stores roles in a nested JSON structure: `{ \"realm_access\": { \"roles\": [\"USER\", \"ADMIN\"] } }`. Spring Security's default `JwtGrantedAuthoritiesConverter` reads the `scope` claim and creates authorities like `SCOPE_openid`, `SCOPE_profile`. It completely ignores `realm_access`. Without a custom converter, `hasRole('ADMIN')` always returns false — your users are authenticated but never authorized. This is the #1 integration pitfall when combining Spring Boot + Keycloak.",
+
+      "**How the Converter Works:** Your `KeycloakRoleConverter` implements `Converter<Jwt, Collection<GrantedAuthority>>`. It: (1) Extracts the `realm_access` claim as a `Map`. (2) Gets the `roles` array from that map. (3) Maps each role string to a `SimpleGrantedAuthority` with `ROLE_` prefix. (4) Returns the collection. Spring Security requires the `ROLE_` prefix for `hasRole()` checks — `hasRole('ADMIN')` internally checks for authority `ROLE_ADMIN`.",
+
+      "**Realm Roles vs Client Roles:** Keycloak supports two role scopes: **Realm roles** (`realm_access.roles`) apply across all clients in the realm. **Client roles** (`resource_access.<client-id>.roles`) are specific to a single client. Best practice: use realm roles for broad access (USER, ADMIN) and client roles for fine-grained, service-specific permissions (ORDER_WRITE, REPORT_VIEW). Your converter should extract both.",
+
+      "## Step 8: CORS Configuration for Frontend Integration",
+
+      "**Why CORS Exists:** Browsers enforce the Same-Origin Policy — a React app on `localhost:3000` cannot make API calls to `localhost:8081` without explicit permission. CORS headers tell the browser 'Yes, this origin is allowed.' Without proper CORS config, your frontend gets `Access-Control-Allow-Origin` errors even though the API works fine in Postman/curl.",
+
+      "**CORS + Spring Security Order:** CORS is processed BEFORE authentication. If the browser sends a preflight `OPTIONS` request, Spring Security must respond with CORS headers WITHOUT requiring a JWT. If CORS is misconfigured, the `OPTIONS` request gets a 401 (no token sent for preflight), and the browser never sends the actual request. Define CORS via a `CorsConfigurationSource` bean, NOT via `@CrossOrigin` annotations on controllers — the bean approach integrates with the security filter chain correctly.",
+
+      "## Step 9: Stateless Architecture & Token Revocation",
+
+      "**Stateless Benefits:** (1) **Horizontal scaling** — any server instance can validate any token using the cached JWKS (no sticky sessions). (2) **No session storage** — reduces memory usage. (3) **Simpler load balancing** — round-robin works perfectly. (4) **Microservice friendly** — tokens flow through multiple services, each validating independently.",
+
+      "**Token Revocation Strategies:** Since JWTs are self-contained, the server cannot invalidate them after issuance. Strategies: (1) **Short expiry** (5-15 min) — limits the damage window. Use refresh tokens to renew seamlessly. (2) **Token blacklist** — store revoked token IDs (the `jti` claim) in Redis; check on every request. Adds latency but provides instant revocation. (3) **Keycloak session logout** — call Keycloak's admin API to invalidate all tokens for a user. New token requests fail, but existing tokens remain valid until expiry.",
+
+      "## Step 10: Security Debugging & Common Pitfalls",
+
+      "**Debugging 401/403 Errors — Checklist:** (1) Enable debug logging: `logging.level.org.springframework.security=DEBUG`. (2) Is the `Authorization` header present? Check browser DevTools → Network tab. (3) Is the token expired? Decode at jwt.io. (4) Does `issuer-uri` in YAML match the `iss` claim in the token exactly (including protocol and port)? (5) Is Keycloak reachable from Spring Boot? (hostname differs inside Docker vs host). (6) Are roles in `realm_access.roles` and is your converter extracting them? (7) Did you add `@EnableMethodSecurity` for `@PreAuthorize` to work?",
+
+      "**Common Pitfalls:** (1) **Docker networking:** Keycloak's issuer URL inside Docker is `http://keycloak:8080/realms/...` but the browser uses `http://localhost:8080/realms/...`. The `iss` claim must match `issuer-uri` exactly — mismatch causes 401. Solution: use `KC_HOSTNAME_URL` or configure `JwtDecoder` to accept both. (2) **Token serialization:** Keycloak tokens can be >2KB. The `Authorization` header has no size limit in HTTP, but some proxies (nginx) default to 4KB/8KB for headers. (3) **Clock skew:** If your server's clock is off by more than a few seconds, token expiry validation fails. Spring Boot allows 60s skew by default.",
     ],
-    code: `// === Spring Boot + Keycloak OAuth2 Resource Server ===
+    code: `// === Complete Spring Boot + Keycloak OAuth2 Resource Server Setup ===
 
-// 1. Dependencies: spring-boot-starter-security + spring-boot-starter-oauth2-resource-server
+// ============================================================
+// STEP 1: Maven Dependencies (pom.xml)
+// ============================================================
+// <dependency>
+//     <groupId>org.springframework.boot</groupId>
+//     <artifactId>spring-boot-starter-security</artifactId>
+// </dependency>
+// <dependency>
+//     <groupId>org.springframework.boot</groupId>
+//     <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+// </dependency>
 
-// 2. application.yml
-// spring.security.oauth2.resourceserver.jwt.issuer-uri: http://localhost:8080/realms/company-realm
+// ============================================================
+// STEP 2: application.yml — Resource Server Config
+// ============================================================
+// spring:
+//   security:
+//     oauth2:
+//       resourceserver:
+//         jwt:
+//           issuer-uri: http://localhost:8080/realms/company-realm
+//           # Spring fetches JWKS from: {issuer-uri}/protocol/openid-connect/certs
+//           # Spring fetches metadata from: {issuer-uri}/.well-known/openid-configuration
+//
+// server:
+//   port: 8081
+//
+// logging:
+//   level:
+//     org.springframework.security: DEBUG   # Enable for troubleshooting
 
-// 3. Keycloak Role Converter
+// ============================================================
+// STEP 3: Keycloak Role Converter
+// Maps Keycloak's realm_access.roles → Spring GrantedAuthority
+// ============================================================
 @Component
 public class KeycloakRoleConverter implements Converter<Jwt, Collection<GrantedAuthority>> {
+
     @Override
     @SuppressWarnings("unchecked")
     public Collection<GrantedAuthority> convert(Jwt jwt) {
+        List<GrantedAuthority> authorities = new ArrayList<>();
+
+        // 1. Extract REALM roles: realm_access.roles
         Map<String, Object> realmAccess = jwt.getClaim("realm_access");
-        if (realmAccess == null) return Collections.emptyList();
-        List<String> roles = (List<String>) realmAccess.get("roles");
-        if (roles == null) return Collections.emptyList();
-        return roles.stream()
-                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
-                .collect(Collectors.toList());
+        if (realmAccess != null) {
+            List<String> realmRoles = (List<String>) realmAccess.get("roles");
+            if (realmRoles != null) {
+                realmRoles.stream()
+                    .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                    .forEach(authorities::add);
+            }
+        }
+
+        // 2. Extract CLIENT roles: resource_access.<client-id>.roles
+        Map<String, Object> resourceAccess = jwt.getClaim("resource_access");
+        if (resourceAccess != null) {
+            resourceAccess.forEach((clientId, clientData) -> {
+                Map<String, Object> clientMap = (Map<String, Object>) clientData;
+                List<String> clientRoles = (List<String>) clientMap.get("roles");
+                if (clientRoles != null) {
+                    clientRoles.stream()
+                        .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                        .forEach(authorities::add);
+                }
+            });
+        }
+
+        return authorities;
     }
 }
 
-// 4. SecurityFilterChain
-@Configuration @EnableWebSecurity @EnableMethodSecurity
+// ============================================================
+// STEP 4: Security Configuration — The SecurityFilterChain
+// ============================================================
+@Configuration
+@EnableWebSecurity       // Activates Spring Security's web protection
+@EnableMethodSecurity    // Enables @PreAuthorize, @PostAuthorize, @Secured
 public class SecurityConfig {
+
     private final KeycloakRoleConverter keycloakRoleConverter;
+
+    // Constructor injection of the role converter
+    public SecurityConfig(KeycloakRoleConverter keycloakRoleConverter) {
+        this.keycloakRoleConverter = keycloakRoleConverter;
+    }
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+
+        // Wire the Keycloak converter into Spring's JWT processing
         JwtAuthenticationConverter jwtConverter = new JwtAuthenticationConverter();
         jwtConverter.setJwtGrantedAuthoritiesConverter(keycloakRoleConverter);
 
         http
-            .cors(cors -> cors.configurationSource(corsSource()))
+            // 1. CORS — must be first (preflight OPTIONS has no JWT)
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+
+            // 2. Disable CSRF — not needed for stateless JWT auth
             .csrf(csrf -> csrf.disable())
-            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+            // 3. Stateless sessions — no server-side session storage
+            .sessionManagement(sm ->
+                sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+            // 4. URL-level authorization rules (evaluated top-to-bottom)
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                 .requestMatchers("/api/public/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                .anyRequest().authenticated()
+                .requestMatchers(HttpMethod.DELETE, "/api/**").hasAnyRole("ADMIN", "MANAGER")
+                .anyRequest().authenticated()   // Everything else requires valid JWT
             )
+
+            // 5. Configure as OAuth2 Resource Server with JWT
             .oauth2ResourceServer(oauth2 -> oauth2
                 .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtConverter))
             );
+
         return http.build();
     }
 
+    // ============================================================
+    // STEP 5: CORS Configuration for Frontend Integration
+    // ============================================================
     @Bean
-    public CorsConfigurationSource corsSource() {
+    public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of("http://localhost:4200", "http://localhost:3000"));
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+
+        // Allowed frontend origins (never use "*" with credentials)
+        config.setAllowedOrigins(List.of(
+            "http://localhost:3000",    // React dev server
+            "http://localhost:4200",    // Angular dev server
+            "https://app.company.com"  // Production frontend
+        ));
+
+        // Allowed HTTP methods
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+
+        // Allowed request headers
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
+
+        // Expose response headers to the browser
+        config.setExposedHeaders(List.of("X-Total-Count", "Link"));
+
+        // Allow cookies/auth headers (required for some OAuth flows)
+        config.setAllowCredentials(true);
+
+        // Cache preflight response for 1 hour (reduces OPTIONS requests)
+        config.setMaxAge(3600L);
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", config);
         return source;
     }
-}`,
-    practice: "Extend the KeycloakRoleConverter to also extract roles from resource_access.<client_id>.roles and merge them with realm roles.",
-    solution: `// Add to convert() method:
-// Map<String, Object> resourceAccess = jwt.getClaim("resource_access");
-// if (resourceAccess != null) {
-//     resourceAccess.values().forEach(clientObj -> {
-//         Map<String, Object> clientMap = (Map<String, Object>) clientObj;
-//         List<String> clientRoles = (List<String>) clientMap.get("roles");
-//         if (clientRoles != null) allRoles.addAll(clientRoles);
-//     });
-// }`
+}
+
+// ============================================================
+// STEP 6: Accessing JWT Claims in Controllers
+// ============================================================
+@RestController
+@RequestMapping("/api/v1/profile")
+public class ProfileController {
+
+    @GetMapping("/me")
+    public Map<String, Object> getMyProfile(JwtAuthenticationToken auth) {
+        Jwt jwt = auth.getToken();
+        return Map.of(
+            "userId",   jwt.getSubject(),                              // sub claim
+            "username", jwt.getClaimAsString("preferred_username"),     // Keycloak username
+            "email",    jwt.getClaimAsString("email"),                  // Keycloak email
+            "roles",    auth.getAuthorities().stream()
+                            .map(GrantedAuthority::getAuthority)
+                            .toList(),
+            "tokenExp", jwt.getExpiresAt()                             // Token expiry
+        );
+    }
+}
+
+// ============================================================
+// STEP 7: Keycloak Docker Compose (for local dev)
+// ============================================================
+// services:
+//   keycloak:
+//     image: quay.io/keycloak/keycloak:latest
+//     command: start-dev
+//     environment:
+//       KEYCLOAK_ADMIN: admin
+//       KEYCLOAK_ADMIN_PASSWORD: admin
+//     ports:
+//       - "8080:8080"
+//
+// After starting:
+// 1. Open http://localhost:8080/admin
+// 2. Create realm: company-realm
+// 3. Create client: my-spa-app (public, Standard Flow + PKCE)
+// 4. Create realm roles: USER, ADMIN, MANAGER
+// 5. Create users and assign roles
+// 6. Test: curl -X POST http://localhost:8080/realms/company-realm/protocol/openid-connect/token \\
+//      -d "grant_type=password&client_id=my-spa-app&username=john&password=secret"`,
+    practice: "Your frontend is on http://localhost:3000 and your API is on http://localhost:8081. The frontend gets a CORS error when calling the API. Walk through the exact sequence of HTTP requests (preflight + actual) and identify what must be configured in both Spring Security and Keycloak.",
+    solution: `// 1. Browser sends preflight: OPTIONS http://localhost:8081/api/v1/users
+//    Headers: Origin: http://localhost:3000, Access-Control-Request-Method: GET,
+//             Access-Control-Request-Headers: Authorization, Content-Type
+//
+// 2. Spring Security CorsFilter intercepts (BEFORE authentication).
+//    CorsConfigurationSource checks if http://localhost:3000 is in allowedOrigins.
+//    If YES → responds with:
+//      Access-Control-Allow-Origin: http://localhost:3000
+//      Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+//      Access-Control-Allow-Headers: Authorization, Content-Type
+//      Access-Control-Max-Age: 3600
+//    Status: 200 OK (no body)
+//
+// 3. Browser validates the preflight response.
+//    If headers match → sends actual request:
+//    GET http://localhost:8081/api/v1/users
+//    Headers: Authorization: Bearer eyJhbGciOi..., Origin: http://localhost:3000
+//
+// 4. BearerTokenAuthenticationFilter extracts JWT.
+// 5. JwtDecoder validates signature, expiry, issuer.
+// 6. KeycloakRoleConverter extracts roles from realm_access.
+// 7. AuthorizationFilter checks if user has required role.
+// 8. Controller returns response with CORS headers.
+//
+// Common fix: Ensure CorsConfigurationSource bean exists (not just @CrossOrigin).
+// In Keycloak: Client → Web Origins → add http://localhost:3000`
   },
   {
     time: "Hour 10",
