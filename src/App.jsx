@@ -14,6 +14,7 @@ import AgenticCommerceTraining from './AgenticCommerceTraining'
 import ReactTraining from './ReactTraining'
 import JavaTraining from './JavaTraining'
 import AngularTraining from './AngularTraining'
+import KeycloakTraining from './KeycloakTraining'
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
       <Route path="/react" element={<ReactTraining />} />
       <Route path="/core-java" element={<JavaTraining />} />
       <Route path="/angular" element={<AngularTraining />} />
+      <Route path="/keycloak" element={<KeycloakTraining />} />
     </Routes>
   )
 }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag, Layers } from "lucide-react";
+import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag, Layers, Key } from "lucide-react";
 
 const courses = [
   {
@@ -198,6 +198,20 @@ const courses = [
     gradient: "from-red-500 via-rose-500 to-fuchsia-500",
     glowColor: "rgba(239,68,68,0.15)",
     tags: ["Angular 17", "TypeScript", "RxJS", "Signals", "Spring Boot", "Docker"],
+  },
+  {
+    id: "keycloak",
+    path: "/keycloak",
+    title: "Keycloak & Spring Boot",
+    subtitle: "IAM, OAuth2 & JWT Security",
+    description:
+      "Ten hours mastering Identity and Access Management with Keycloak. Deep dive into OAuth 2.0, OpenID Connect, JWT validation, Self-Signed TLS certificates, Realm/Client configuration, and securing Spring Boot REST APIs with stateless stateless session filtering.",
+    duration: "10 hours",
+    lessons: 10,
+    icon: Key,
+    gradient: "from-yellow-500 via-amber-500 to-orange-500",
+    glowColor: "rgba(245,158,11,0.15)",
+    tags: ["Keycloak", "OAuth 2.0", "Spring Boot", "JWT", "Security", "IAM"],
   },
 ];
 
