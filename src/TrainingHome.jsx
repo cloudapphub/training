@@ -213,6 +213,20 @@ const courses = [
     glowColor: "rgba(245,158,11,0.15)",
     tags: ["Keycloak", "OAuth 2.0", "Spring Boot", "JWT", "Security", "IAM"],
   },
+  {
+    id: "spring-boot",
+    path: "/spring-boot",
+    title: "Spring Boot 3 Mastery",
+    subtitle: "Full Stack Java Development",
+    description:
+      "Twelve hours mastering Spring Boot 3.4.x with Java 21 — Dependency Injection, REST APIs, JPA with PostgreSQL, Flyway migrations, Keycloak OAuth2/JWT security, @PreAuthorize method security, Testing with Testcontainers, and production Docker Compose deployments.",
+    duration: "12 hours",
+    lessons: 12,
+    icon: Layers,
+    gradient: "from-green-500 via-emerald-500 to-teal-500",
+    glowColor: "rgba(16,185,129,0.15)",
+    tags: ["Spring Boot 3", "JPA", "PostgreSQL", "Keycloak", "Testcontainers", "Docker"],
+  },
 ];
 
 export default function TrainingHome() {

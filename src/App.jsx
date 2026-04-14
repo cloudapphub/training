@@ -15,6 +15,7 @@ import ReactTraining from './ReactTraining'
 import JavaTraining from './JavaTraining'
 import AngularTraining from './AngularTraining'
 import KeycloakTraining from './KeycloakTraining'
+import SpringBootTraining from './SpringBootTraining'
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
       <Route path="/core-java" element={<JavaTraining />} />
       <Route path="/angular" element={<AngularTraining />} />
       <Route path="/keycloak" element={<KeycloakTraining />} />
+      <Route path="/spring-boot" element={<SpringBootTraining />} />
     </Routes>
   )
 }
