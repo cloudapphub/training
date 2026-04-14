@@ -3,58 +3,257 @@ export const springBootCoreLessons = [
     time: "Hour 1",
     title: "Spring Boot 3 Fundamentals",
     concept: [
-      "**Spring Framework** is a comprehensive Java platform that simplifies enterprise development through **Inversion of Control (IoC)** and **Dependency Injection (DI)**. Instead of your code creating its own dependencies, the Spring Container creates and injects them for you. The core container (`ApplicationContext`) manages the full lifecycle of every object (bean) — creation, wiring, initialization, and destruction.",
-      "**Spring Boot** builds on top of Spring Framework by providing **auto-configuration**, **embedded servers**, and **opinionated defaults**. A single `@SpringBootApplication` annotation bootstraps everything — component scanning, auto-config, and the embedded Tomcat server. Under the hood, `@SpringBootApplication` is a meta-annotation combining three: `@Configuration` (marks the class as a bean definition source), `@EnableAutoConfiguration` (triggers classpath-based auto-configuration), and `@ComponentScan` (scans the current package and sub-packages for `@Component`, `@Service`, `@Repository`, `@Controller` annotated classes).",
-      "**Auto-Configuration Internals:** When the app starts, Spring Boot inspects the classpath via `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`. If it finds `postgresql` on the classpath, it auto-configures a `DataSource`. If Jackson is present, it configures JSON serialization. You can see exactly which auto-configs activated by adding `--debug` to the startup command or setting `debug=true` in `application.properties`.",
-      "**Starters** are curated dependency bundles. Adding `spring-boot-starter-web` pulls in Spring MVC, Jackson JSON, Tomcat, and validation. Adding `spring-boot-starter-data-jpa` pulls in Hibernate, HikariCP, and Spring Data. Starters follow a naming convention: `spring-boot-starter-*` for official starters. Third-party starters use `*-spring-boot-starter`. Each starter has a transitive dependency tree carefully curated to avoid version conflicts through the `spring-boot-dependencies` BOM (Bill of Materials).",
-      "**Configuration Hierarchy:** Spring Boot reads configuration from multiple sources in priority order: (1) Command-line args, (2) Environment variables, (3) `application.yml` / `application.properties`, (4) Default values. Profiles let you swap configs per environment. A higher-priority source overrides a lower one. For example, `SPRING_DATASOURCE_URL` env var overrides `spring.datasource.url` in YAML.",
-      "**Profiles** provide environment-specific configuration. Use `application-dev.yml` and `application-prod.yml` for per-environment settings. Activate via `spring.profiles.active=dev` or `SPRING_PROFILES_ACTIVE=dev`. Profile-specific files merge with and override the base `application.yml`. You can also group profiles in Spring Boot 3: `spring.profiles.group.production=proddb,prodmetrics` activates multiple profiles together.",
-      "**Embedded Servers:** Spring Boot includes an embedded Tomcat (default), Jetty, or Undertow server. You don't need to deploy a WAR file to an external server. This makes your application a self-contained JAR that can be started with `java -jar`. For production, Tomcat's thread pool defaults to 200 threads (`server.tomcat.threads.max`). You can switch to Jetty by excluding `spring-boot-starter-tomcat` and adding `spring-boot-starter-jetty`.",
+      "## Step 1: Spring Framework vs Spring Boot — Understanding the Difference",
+
+      "**Spring Framework** is a comprehensive Java platform (started in 2003) that simplifies enterprise development through **Inversion of Control (IoC)** and **Dependency Injection (DI)**. Instead of your code creating its own dependencies with `new`, the Spring Container creates and injects them for you. The core container (`ApplicationContext`) manages the full lifecycle of every object (called a *bean*) — creation, wiring, initialization, and destruction.",
+
+      "**The Problem Spring Boot Solves:** Before Spring Boot (2014), setting up a Spring project required extensive XML or Java configuration: you had to manually configure a `DataSource`, an `EntityManagerFactory`, a `TransactionManager`, a `DispatcherServlet`, Jackson converters, and more — often 100+ lines of boilerplate before writing any business logic. Spring Boot eliminates this by inspecting your classpath and auto-configuring everything with sensible defaults.",
+
+      "**Spring Boot** builds on top of Spring Framework by providing: (1) **Auto-configuration** — automatically configures beans based on what's on your classpath. (2) **Embedded servers** — Tomcat, Jetty, or Undertow built into your JAR. No external server setup needed. (3) **Opinionated defaults** — preconfigured settings that work for 90% of applications. (4) **Starters** — curated dependency bundles that pull in everything you need. (5) **Production-ready features** — Actuator endpoints for health, metrics, and monitoring out of the box.",
+
+      "## Step 2: @SpringBootApplication — The Entry Point Decoded",
+
+      "**@SpringBootApplication** is a meta-annotation that combines exactly three annotations: (1) `@Configuration` — marks the class as a source of bean definitions (replaces XML config). Spring can call `@Bean` methods in this class. (2) `@EnableAutoConfiguration` — triggers Spring Boot's auto-configuration engine. It examines your classpath, your existing beans, and your properties, then automatically configures everything it can. (3) `@ComponentScan` — tells Spring to scan the current package and ALL sub-packages for classes annotated with `@Component`, `@Service`, `@Repository`, `@Controller`, and `@RestController`.",
+
+      "**Package Structure Matters:** Because `@ComponentScan` scans from the annotated class's package downward, your main application class should be in the root package (e.g., `com.company.myapp`). All other packages (`com.company.myapp.service`, `com.company.myapp.controller`) are sub-packages and get scanned automatically. If your main class is in `com.company.myapp.config`, beans in `com.company.myapp.service` will NOT be found — this is a common startup issue.",
+
+      "**SpringApplication.run() — What Happens on Startup:** When you call `SpringApplication.run(DemoApplication.class, args)`, Spring Boot executes a precise sequence: (1) Creates the `ApplicationContext` (container). (2) Loads all `@Configuration` classes. (3) Runs component scanning to discover beans. (4) Processes auto-configuration classes. (5) Creates and wires all singleton beans. (6) Calls `@PostConstruct` methods. (7) Starts the embedded web server. (8) Publishes `ApplicationReadyEvent`. The entire startup is logged — look for 'Started DemoApplication in X seconds'.",
+
+      "## Step 3: Auto-Configuration — How Spring Boot 'Knows' What to Configure",
+
+      "**How It Works:** Spring Boot ships with 150+ auto-configuration classes (e.g., `DataSourceAutoConfiguration`, `JacksonAutoConfiguration`, `SecurityAutoConfiguration`). On startup, it reads `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` to discover them. Each class is annotated with conditions: `@ConditionalOnClass(DataSource.class)` — only activates if the class is on the classpath. `@ConditionalOnMissingBean(DataSource.class)` — only activates if YOU haven't already defined one. This means auto-config provides defaults that you can always override.",
+
+      "**Example — DataSource Auto-Configuration:** When `spring-boot-starter-data-jpa` is on your classpath, Spring Boot: (1) Sees `HikariDataSource.class` on the classpath → activates `DataSourceAutoConfiguration`. (2) Reads `spring.datasource.url`, `username`, `password` from your config. (3) Creates a `HikariDataSource` bean with default pool settings. (4) If you define your own `@Bean DataSource`, auto-config backs off (`@ConditionalOnMissingBean`). You can see ALL active auto-configurations by running with `--debug` flag or setting `debug=true`.",
+
+      "**Auto-Configuration Report:** Add `--debug` to your run command or set `logging.level.org.springframework.boot.autoconfigure=DEBUG`. Spring prints a report showing: **Positive matches** (auto-configs that activated and why), **Negative matches** (auto-configs that didn't activate and why), and **Exclusions** (auto-configs you explicitly disabled with `@SpringBootApplication(exclude = {...})`).",
+
+      "## Step 4: Starters — Curated Dependency Bundles",
+
+      "**What Starters Provide:** A starter is a Maven/Gradle dependency that pulls in a curated set of transitive dependencies. `spring-boot-starter-web` pulls in: Spring MVC, Jackson (JSON serialization), Tomcat (embedded server), Bean Validation (Hibernate Validator), and SLF4J/Logback (logging). Without starters, you'd manually declare 10-15 individual dependencies and manage version compatibility yourself.",
+
+      "**The BOM (Bill of Materials):** `spring-boot-starter-parent` (or `spring-boot-dependencies` BOM) locks down the versions of ALL transitive dependencies (Spring, Jackson, Hibernate, Tomcat, Netty, etc.) to versions that are tested together. This prevents version conflicts. You declare dependencies WITHOUT version numbers: `<artifactId>spring-boot-starter-web</artifactId>` — the BOM resolves the version. To override a managed version, set it in `<properties>`: `<jackson.version>2.17.0</jackson.version>`.",
+
+      "**Common Starters:** `spring-boot-starter-web` (REST APIs), `spring-boot-starter-data-jpa` (JPA + Hibernate), `spring-boot-starter-security` (authentication/authorization), `spring-boot-starter-validation` (Bean Validation), `spring-boot-starter-actuator` (monitoring), `spring-boot-starter-test` (JUnit 5 + Mockito + AssertJ + MockMvc), `spring-boot-starter-oauth2-resource-server` (JWT validation). Third-party starters use reversed naming: `mybatis-spring-boot-starter`, `springdoc-openapi-starter-webmvc-ui`.",
+
+      "## Step 5: Configuration — application.yml vs application.properties",
+
+      "**Configuration Hierarchy (Priority Order):** Spring Boot reads config from multiple sources. Higher priority overrides lower: (1) Command-line args (`--server.port=9090`). (2) `SPRING_APPLICATION_JSON` env var (inline JSON). (3) OS environment variables (`SPRING_DATASOURCE_URL`). (4) `application-{profile}.yml` (profile-specific). (5) `application.yml` (base config). (6) `@PropertySource` annotations. (7) Default values defined in code. This means a CI/CD pipeline can override any setting via environment variables without touching config files.",
+
+      "**YAML vs Properties:** YAML (`application.yml`) supports hierarchical structure, multi-line strings, lists, and maps naturally. Properties (`application.properties`) is flat key=value. YAML is preferred for complex configs. Example: `spring.datasource.url=...` in properties vs nested `spring: datasource: url: ...` in YAML. YAML files MUST use spaces, not tabs — tabs cause parse failures.",
+
+      "**Common Configuration Properties:** `server.port` (default 8080). `spring.application.name` (used in logs, Actuator, service discovery). `spring.datasource.*` (DB connection). `spring.jpa.*` (Hibernate settings). `logging.level.*` (per-package log levels). `management.endpoints.*` (Actuator). Spring Boot has 1000+ auto-config properties — see the full reference at docs.spring.io.",
+
+      "## Step 6: Profiles — Environment-Specific Configuration",
+
+      "**How Profiles Work:** Create `application-dev.yml` for development and `application-prod.yml` for production. Activate with `spring.profiles.active=dev` in base `application.yml`, or via env var `SPRING_PROFILES_ACTIVE=prod`, or command-line `--spring.profiles.active=prod`. Profile-specific files MERGE with base `application.yml` and override any overlapping properties.",
+
+      "**Profile Groups (Spring Boot 3):** Instead of activating multiple profiles individually, group them: `spring.profiles.group.production=proddb,prodmetrics,prodsecurity` — activating 'production' activates all three. This keeps your activation simple while supporting fine-grained configuration.",
+
+      "**Profile-Specific Beans:** Annotate beans with `@Profile(\"dev\")` to load only in dev. Use `@Profile(\"!prod\")` for negation (loads everywhere except prod). Common pattern: `@Profile(\"dev\")` on an in-memory data source, `@Profile(\"prod\")` on a PostgreSQL data source. The same code runs in both environments — only the active profile changes which beans are created.",
+
+      "## Step 7: Embedded Servers — Self-Contained Deployment",
+
+      "**How Embedded Servers Work:** Spring Boot packages Tomcat (default), Jetty, or Undertow directly into your JAR. Your application is a standard Java program — start with `java -jar myapp.jar`. No WAR file deployment to an external server. This simplifies containerization (Docker), CI/CD pipelines, and cloud deployment.",
+
+      "**Tomcat Configuration:** Default thread pool: 200 threads (`server.tomcat.threads.max`). Connection timeout: 20s (`server.tomcat.connection-timeout`). Max request header size: 8KB (`server.max-http-header-size`). Access logging: `server.tomcat.accesslog.enabled=true`. For production, tune `threads.max` based on your workload — CPU-bound apps need fewer threads, I/O-bound apps (DB queries, external API calls) benefit from more.",
+
+      "**Switching Servers:** Exclude Tomcat and add an alternative: exclude `spring-boot-starter-tomcat` from `spring-boot-starter-web`, add `spring-boot-starter-jetty` or `spring-boot-starter-undertow`. Jetty is lighter-weight and preferred for microservices. Undertow uses non-blocking I/O and handles high concurrency well.",
+
+      "## Step 8: Java 21 Features in Spring Boot 3.4.x",
+
+      "**Why Java 21?** Spring Boot 3.x requires Java 17+. Java 21 is the latest LTS (Long-Term Support) release. Key features used in modern Spring apps: **Records** (immutable data carriers for DTOs and config), **Sealed classes** (restrict inheritance for domain modeling), **Pattern matching for instanceof** (cleaner type checks), **Text blocks** (multi-line strings for SQL/JSON templates), **Virtual threads** (Project Loom — millions of concurrent threads for I/O-bound workloads).",
+
+      "**Virtual Threads (Project Loom):** Spring Boot 3.2+ supports virtual threads out of the box. Set `spring.threads.virtual.enabled=true` and Tomcat creates a virtual thread per request instead of using a platform thread pool. Virtual threads are lightweight (~1KB vs ~1MB for platform threads) — you can handle 100K+ concurrent connections without a reactive framework. This eliminates the need for WebFlux/Reactor in most I/O-bound applications.",
+
+      "**Records as DTOs:** Java Records are perfect for request/response DTOs: `public record CreateUserRequest(@NotBlank String name, @Email String email, @Min(18) int age) {}`. Records are immutable, have auto-generated `equals()`, `hashCode()`, `toString()`, and constructor. Jackson deserializes JSON into Records automatically. Use Records everywhere you'd previously write a POJO with only getters.",
+
+      "## Step 9: Project Structure — Best Practices",
+
+      "**Standard Package Layout:** `com.company.myapp` (root — contains `@SpringBootApplication`). `com.company.myapp.controller` (REST controllers). `com.company.myapp.service` (business logic). `com.company.myapp.repository` (data access). `com.company.myapp.model` or `.entity` (JPA entities). `com.company.myapp.dto` (request/response DTOs). `com.company.myapp.config` (configuration classes). `com.company.myapp.exception` (custom exceptions + global handler). This structure follows the **'Package by Layer'** pattern. An alternative is **'Package by Feature'**: `com.company.myapp.user`, `com.company.myapp.order` — each containing its own controller, service, and repository.",
+
+      "**Resource Directories:** `src/main/resources/application.yml` (config). `src/main/resources/db/migration/` (Flyway scripts). `src/main/resources/static/` (static files). `src/main/resources/templates/` (Thymeleaf templates). `src/test/resources/application-test.yml` (test config).",
+
+      "## Step 10: Build Tools — Maven vs Gradle",
+
+      "**Maven** uses `pom.xml` (XML-based). `spring-boot-starter-parent` sets Java version, plugin versions, and dependency management. `mvn spring-boot:run` starts the app. `mvn package` creates the executable JAR. The `spring-boot-maven-plugin` repackages the JAR with an embedded class loader that knows how to load nested JARs.",
+
+      "**Gradle** uses `build.gradle` (Groovy) or `build.gradle.kts` (Kotlin DSL). Apply `org.springframework.boot` and `io.spring.dependency-management` plugins. `./gradlew bootRun` starts the app. Gradle is faster for large projects (incremental compilation, build cache). Both build tools produce identical executable JARs.",
+
+      "**Executable JAR (Fat JAR):** The final JAR contains: your compiled classes, all dependency JARs nested inside, and a Spring Boot class loader. Run with `java -jar myapp.jar`. Size is typically 30-80MB depending on dependencies. For Docker, use multi-stage builds to keep the image small (covered in Hour 12).",
     ],
     code: `// === Spring Boot 3.4.x + Java 21 Project Anatomy ===
 
+// ============================================================
+// STEP 1: The Main Application Class
+// ============================================================
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication  // = @Configuration + @EnableAutoConfiguration + @ComponentScan
 public class DemoApplication {
     public static void main(String[] args) {
+        // This single line:
+        // 1. Creates the ApplicationContext (IoC container)
+        // 2. Runs component scanning for @Component, @Service, etc.
+        // 3. Processes all auto-configuration classes
+        // 4. Creates and wires all singleton beans
+        // 5. Starts the embedded Tomcat server
+        // 6. Publishes ApplicationReadyEvent
         SpringApplication.run(DemoApplication.class, args);
     }
 }
 
-// pom.xml — Minimal Dependencies
+// ============================================================
+// STEP 2: Maven pom.xml — Project Setup
+// ============================================================
 // <parent>
 //     <groupId>org.springframework.boot</groupId>
 //     <artifactId>spring-boot-starter-parent</artifactId>
 //     <version>3.4.5</version>
+//     <!-- Parent BOM locks all dependency versions -->
 // </parent>
-// <properties><java.version>21</java.version></properties>
+//
+// <properties>
+//     <java.version>21</java.version>
+// </properties>
+//
 // <dependencies>
+//     <!-- Web: Spring MVC + Tomcat + Jackson + Validation -->
 //     <dependency>
 //         <groupId>org.springframework.boot</groupId>
 //         <artifactId>spring-boot-starter-web</artifactId>
 //     </dependency>
+//     <!-- No version needed — managed by parent BOM -->
+//
+//     <!-- JPA: Hibernate + HikariCP + Spring Data -->
+//     <dependency>
+//         <groupId>org.springframework.boot</groupId>
+//         <artifactId>spring-boot-starter-data-jpa</artifactId>
+//     </dependency>
+//
+//     <!-- PostgreSQL Driver -->
+//     <dependency>
+//         <groupId>org.postgresql</groupId>
+//         <artifactId>postgresql</artifactId>
+//         <scope>runtime</scope>
+//     </dependency>
+//
+//     <!-- Testing: JUnit 5 + Mockito + AssertJ + MockMvc -->
+//     <dependency>
+//         <groupId>org.springframework.boot</groupId>
+//         <artifactId>spring-boot-starter-test</artifactId>
+//         <scope>test</scope>
+//     </dependency>
 // </dependencies>
 
-// application.yml
+// ============================================================
+// STEP 3: application.yml — Full Configuration Example
+// ============================================================
 // server:
 //   port: 8081
+//   shutdown: graceful                   # Wait for in-flight requests
+//   tomcat:
+//     threads:
+//       max: 200                         # Max worker threads
+//       min-spare: 10                    # Min idle threads
+//
 // spring:
 //   application:
-//     name: demo-service
+//     name: demo-service                 # Used in logs, Actuator, discovery
 //   profiles:
-//     active: dev`,
-    practice: "Create a new Spring Boot project with Java 21, Spring Boot 3.4.x, and the Web starter. Add a GET endpoint returning 'Hello, Spring Boot 3!' and run it.",
+//     active: dev                        # Active profile
+//     group:
+//       production: proddb,prodsecurity  # Profile grouping (Boot 3+)
+//   threads:
+//     virtual:
+//       enabled: true                    # Java 21 Virtual Threads!
+//
+// logging:
+//   level:
+//     root: INFO
+//     com.company.myapp: DEBUG           # Your package at DEBUG
+//     org.springframework.security: DEBUG # Security troubleshooting
+
+// ============================================================
+// STEP 4: Java 21 Records as DTOs
+// ============================================================
+// Request DTO — immutable, validated, Jackson-compatible
+public record CreateUserRequest(
+    @NotBlank String name,
+    @Email String email,
+    @Min(18) int age
+) {}
+
+// Response DTO — immutable, auto-generates equals/hashCode/toString
+public record UserResponse(
+    Long id, String name, String email,
+    int age, Instant createdAt
+) {}
+
+// ============================================================
+// STEP 5: A Simple REST Controller
+// ============================================================
+@RestController
+@RequestMapping("/api/v1/hello")
+public class HelloController {
+
+    @GetMapping
+    public Map<String, String> hello() {
+        return Map.of(
+            "message", "Hello, Spring Boot 3!",
+            "java", System.getProperty("java.version"),
+            "timestamp", Instant.now().toString()
+        );
+    }
+}
+
+// ============================================================
+// STEP 6: Project Structure (Best Practice)
+// ============================================================
+// com.company.myapp/
+// ├── DemoApplication.java              ← @SpringBootApplication (root package)
+// ├── controller/
+// │   └── UserController.java           ← @RestController
+// ├── service/
+// │   └── UserService.java              ← @Service (business logic)
+// ├── repository/
+// │   └── UserRepository.java           ← extends JpaRepository
+// ├── entity/
+// │   └── User.java                     ← @Entity (JPA)
+// ├── dto/
+// │   ├── CreateUserRequest.java        ← record (request)
+// │   └── UserResponse.java             ← record (response)
+// ├── config/
+// │   └── SecurityConfig.java           ← @Configuration
+// └── exception/
+//     ├── ResourceNotFoundException.java
+//     └── GlobalExceptionHandler.java   ← @RestControllerAdvice`,
+    practice: "Create a new Spring Boot 3.4.x project with Java 21. Add a GET endpoint at /api/v1/info that returns the app name, Java version, active profiles, and current timestamp. Enable virtual threads in application.yml.",
     solution: `// @RestController
-// public class HelloController {
-//     @GetMapping("/hello")
-//     public String hello() {
-//         return "Hello, Spring Boot 3!";
+// @RequestMapping("/api/v1/info")
+// public class InfoController {
+//
+//     @Value("spring.application.name")
+//     private String appName;
+//
+//     @Autowired
+//     private Environment environment;
+//
+//     @GetMapping
+//     public Map<String, Object> info() {
+//         return Map.of(
+//             "app", appName,
+//             "java", System.getProperty("java.version"),
+//             "profiles", List.of(environment.getActiveProfiles()),
+//             "virtualThreads", Thread.currentThread().isVirtual(),
+//             "timestamp", Instant.now()
+//         );
 //     }
 // }
+// application.yml:
+// spring.threads.virtual.enabled: true
 // Run: mvn spring-boot:run
-// Test: curl http://localhost:8080/hello`
+// Test: curl http://localhost:8081/api/v1/info`
   },
   {
     time: "Hour 2",
