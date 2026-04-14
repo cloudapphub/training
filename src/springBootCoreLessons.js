@@ -219,157 +219,554 @@ public class ResourceNotFoundException extends RuntimeException {
     time: "Hour 4",
     title: "Bean Lifecycle, Scopes & Configuration",
     concept: [
-      "**Bean Lifecycle:** Constructor -> DI -> `@PostConstruct` -> Bean ready. On shutdown: `@PreDestroy` for cleanup. This is the lifecycle for singleton beans (the default). The full lifecycle is: (1) Instantiation via constructor, (2) Dependency injection, (3) `BeanPostProcessor.postProcessBeforeInitialization()`, (4) `@PostConstruct` methods, (5) `InitializingBean.afterPropertiesSet()`, (6) `BeanPostProcessor.postProcessAfterInitialization()`, (7) Bean is ready. Understanding this chain is critical for debugging initialization order issues.",
-      "**Bean Scopes:** `singleton` (default): one instance per ApplicationContext — shared across all injection points. `prototype`: new instance every time the bean is requested from the container (Spring does NOT manage prototype bean destruction — you must clean up yourself). `request`: one per HTTP request (web only). `session`: one per HTTP session (web only). `application`: one per `ServletContext` (rare).",
-      "**Scope Interaction Pitfall:** Injecting a `prototype` or `request`-scoped bean into a `singleton` always returns the same instance (captured at singleton creation time). Fix this by injecting `ObjectProvider<RequestScopedBean>` or `@Scope(proxyMode = ScopedProxyMode.TARGET_CLASS)` on the shorter-lived bean, which creates a proxy that delegates to the correct instance per scope.",
-      "**@ConfigurationProperties** is the type-safe way to bind external config to a Java record. Instead of scattering `@Value`, group related settings and bind a whole prefix at once. Spring Boot performs relaxed binding: `gateway-url` in YAML maps to `gatewayUrl` in Java. It supports `Duration` (e.g., `30s`, `5m`), `DataSize` (e.g., `10MB`), lists, maps, and nested objects. Add `@Validated` with Jakarta constraints (`@NotBlank`, `@Min`, etc.) for startup validation — the app fails fast if config is invalid.",
-      "**@Value vs @ConfigurationProperties:** `@Value(\"${app.timeout}\")` injects a single property and supports SpEL expressions. `@ConfigurationProperties` binds an entire prefix hierarchy at once, supports type-safe access, IDE auto-completion via `spring-boot-configuration-processor`, and validation. Rule of thumb: use `@Value` for one-off values; use `@ConfigurationProperties` for groups of related config.",
-      "**Custom Beans via @Bean:** When you need to configure a third-party library class (which you can't annotate with `@Service` since you don't own the source code), use a `@Configuration` class with `@Bean` methods. The method name becomes the bean name by default. Use `@Bean(name = \"customName\")` to override. Spring calls `@Bean` methods in **full mode** (with CGLIB proxying) — calling one `@Bean` method from another returns the singleton, not a new instance.",
-      "**Conditional Beans:** `@ConditionalOnProperty(name = \"feature.x\", havingValue = \"true\")` creates the bean only if the property is set. `@ConditionalOnMissingBean(SomeService.class)` creates a default only when no other bean of that type exists — this is how auto-configuration provides sensible defaults that you can override.",
-    ],
-    code: `// === Bean Lifecycle & Configuration ===
+      "## Step 1: What Is a Bean?",
 
-// 1. Lifecycle Hooks
+      "**A Bean** is simply a Java object that Spring creates, configures, and manages for you. When you annotate a class with `@Component`, `@Service`, `@Repository`, or `@Controller`, Spring's component scanning discovers it at startup and registers it as a bean in the **ApplicationContext** (the IoC container). You can also define beans explicitly using `@Bean` methods in `@Configuration` classes — this is how you configure third-party library objects that you don't own the source code for.",
+
+      "**Bean Names:** Every bean has a name. By default, it's the class name in camelCase: `PaymentService` → `paymentService`. Override with `@Component(\"myCustomName\")` or `@Bean(name = \"myCustomName\")`. Bean names must be unique within an ApplicationContext — duplicates cause startup failures.",
+
+      "## Step 2: The Complete Bean Lifecycle — 7 Phases",
+
+      "**Phase 1 — Instantiation:** Spring calls the constructor. For constructor injection, all dependencies are resolved and passed as constructor arguments at this point. If a required dependency is missing, Spring throws `UnsatisfiedDependencyException` and the app fails to start.",
+
+      "**Phase 2 — Dependency Injection:** For setter injection or field injection (not recommended), dependencies are injected after construction. Spring resolves `@Autowired` fields and setters, looks up beans by type (or by `@Qualifier` name), and injects them.",
+
+      "**Phase 3 — BeanPostProcessor.postProcessBeforeInitialization():** All registered `BeanPostProcessor` beans get a chance to modify the bean BEFORE initialization. This is how Spring implements `@Autowired` (via `AutowiredAnnotationBeanPostProcessor`) and `@Value` injection. Custom `BeanPostProcessors` can add logging, validation, or dynamic proxies at this stage.",
+
+      "**Phase 4 — Initialization Callbacks:** Three mechanisms execute in order: (1) `@PostConstruct` methods — the recommended approach, clean and simple. (2) `InitializingBean.afterPropertiesSet()` — interface-based, tightly couples to Spring. (3) `@Bean(initMethod = \"init\")` — XML-era, rarely used. Use `@PostConstruct` for cache warming, connection validation, background task scheduling, or any setup that requires all dependencies to be injected first.",
+
+      "**Phase 5 — BeanPostProcessor.postProcessAfterInitialization():** Post-processors run again AFTER initialization. This is where Spring creates **AOP proxies** — wrapping your bean in a proxy that adds cross-cutting behavior like `@Transactional` (transaction management), `@Async` (async execution), `@Cacheable` (method result caching), and `@PreAuthorize` (security checks). The object you inject is often a proxy, not your original class.",
+
+      "**Phase 6 — Bean Ready:** The bean is fully initialized, proxied (if needed), and available for injection into other beans. For singletons, this happens once at startup and the bean lives for the entire application lifecycle.",
+
+      "**Phase 7 — Destruction:** On `ApplicationContext.close()` (app shutdown, SIGTERM): (1) `@PreDestroy` methods run — use for cleanup: close connections, flush caches, cancel schedulers. (2) `DisposableBean.destroy()` — interface-based alternative. (3) `@Bean(destroyMethod = \"close\")` — Spring auto-detects `close()` and `shutdown()` methods. **Important:** Prototype beans are NOT destroyed by Spring — you must manage their lifecycle yourself.",
+
+      "## Step 3: Bean Scopes Explained",
+
+      "**Singleton Scope (default):** One instance per ApplicationContext, shared across all injection points. Created eagerly at startup (unless `@Lazy`). Thread-safe concern: if your singleton holds mutable state, concurrent requests can cause race conditions. Rule: keep singletons stateless or use thread-safe collections.",
+
+      "**Prototype Scope:** A new instance every time the bean is requested from the container. NOT created at startup — only when first injected or explicitly requested via `applicationContext.getBean()`. Spring creates it, injects dependencies, calls `@PostConstruct`, then hands it off. **Spring does NOT track prototype beans after creation** — no `@PreDestroy`, no lifecycle management. Use for stateful, short-lived objects like request tracers or report builders.",
+
+      "**Web Scopes (require `spring-boot-starter-web`):** `request` — one instance per HTTP request, destroyed when the request completes. `session` — one per HTTP session, destroyed on session timeout. `application` — one per `ServletContext` (essentially a singleton but tied to the web layer). These are implemented internally using ThreadLocal + proxy patterns.",
+
+      "## Step 4: The Scope Injection Pitfall — And How to Fix It",
+
+      "**The Problem:** If you inject a `prototype`-scoped bean into a `singleton`, the singleton captures one instance of the prototype at construction time and reuses it forever. Every call to the singleton uses the SAME prototype instance — defeating the entire purpose of `prototype` scope. The same issue occurs with `request`-scoped beans injected into singletons.",
+
+      "**Fix 1 — ObjectProvider (Recommended):** Inject `ObjectProvider<MyPrototype>` instead of `MyPrototype` directly. Call `provider.getObject()` each time you need a new instance. This is clean, type-safe, and doesn't require any annotations on the prototype class. Example: `public MyService(ObjectProvider<RequestTracer> tracerProvider) { ... }` then `tracerProvider.getObject()` in each method.",
+
+      "**Fix 2 — Scoped Proxy:** Add `@Scope(value = \"prototype\", proxyMode = ScopedProxyMode.TARGET_CLASS)` on the prototype bean. Spring creates a CGLIB proxy that delegates to a new instance per invocation. The singleton injects the proxy, unaware that the underlying target changes. For interfaces, use `ScopedProxyMode.INTERFACES` instead.",
+
+      "## Step 5: @ConfigurationProperties — Type-Safe External Config",
+
+      "**Why @ConfigurationProperties?** Instead of scattering `@Value(\"${app.payment.gateway-url}\")` annotations across your codebase, group all related config under one prefix and bind it to a Java Record. Benefits: (1) Type safety — Spring validates types at startup (e.g., `Duration`, `int`, `boolean`). (2) IDE auto-completion — add `spring-boot-configuration-processor` to your build for metadata generation. (3) Centralized validation — annotate with `@Validated` + Jakarta constraints. (4) Immutability — records are immutable by design.",
+
+      "**Relaxed Binding:** Spring Boot maps YAML/properties keys to Java fields using relaxed binding. All of these resolve to the same field: `gateway-url` (kebab-case, recommended in YAML), `gatewayUrl` (camelCase, in Java), `GATEWAY_URL` (SCREAMING_SNAKE_CASE, in env vars), `gateway_url` (snake_case). This means `SPRING_DATASOURCE_URL` env var maps to `spring.datasource.url` in YAML.",
+
+      "**Supported Types:** `String`, `int`, `long`, `boolean`, `Duration` (`30s`, `5m`, `2h`), `DataSize` (`10MB`, `1GB`), `List<String>`, `Map<String, String>`, nested records, `Optional<String>`, enums, `InetAddress`, `File`, `Path`. Spring automatically converts YAML values to these types.",
+
+      "## Step 6: @Value — When and When NOT to Use",
+
+      "**@Value(\"${property.key}\")** injects a single property value. Supports SpEL: `@Value(\"#{2 * T(Math).PI}\")`. Supports defaults: `@Value(\"${app.timeout:30s}\")`. Use for simple, standalone values that don't belong to a config group. **Avoid** for groups of related properties — use `@ConfigurationProperties` instead.",
+
+      "**@Value Limitations:** No relaxed binding (must match exactly). No IDE auto-completion. No validation support. No metadata generation. If you have 5+ `@Value` annotations in a class, refactor to `@ConfigurationProperties`.",
+
+      "## Step 7: Custom @Bean Methods — Configuring Third-Party Libraries",
+
+      "**When to Use @Bean:** You can't annotate classes you don't own (e.g., `RestClient`, `ObjectMapper`, `DataSource`) with `@Service`. Instead, create a `@Configuration` class and define `@Bean` methods that construct and return instances. Spring calls these methods once (for singletons), caches the result, and injects it wherever needed.",
+
+      "**CGLIB Proxying (Full Mode):** `@Configuration` classes are proxied by CGLIB. If `beanA()` calls `beanB()` within the same config class, the call is intercepted by the proxy and returns the existing singleton — NOT a new instance. This ensures beans are truly singletons. `@Configuration(proxyBeanMethods = false)` (lite mode) disables this — useful for performance but inter-bean references create new instances each time.",
+
+      "## Step 8: Conditional Bean Creation",
+
+      "**@ConditionalOnProperty:** `@ConditionalOnProperty(name = \"feature.cache.enabled\", havingValue = \"true\")` — creates the bean only if the property equals the specified value. Use `matchIfMissing = true` to create the bean when the property is absent (default-ON behavior).",
+
+      "**@ConditionalOnMissingBean:** `@ConditionalOnMissingBean(CacheService.class)` — creates a default implementation only if the user hasn't provided their own. This is the backbone of auto-configuration: Spring Boot provides sensible defaults that you override by simply defining your own bean of the same type.",
+
+      "**@ConditionalOnClass:** `@ConditionalOnClass(name = \"io.lettuce.core.RedisClient\")` — creates the bean only if the class is on the classpath. Auto-config uses this to conditionally create Redis, Kafka, or MongoDB beans based on whether the corresponding libraries are present.",
+
+      "## Step 9: BeanPostProcessor — Spring's Extension Point",
+
+      "**BeanPostProcessor** is a powerful interface that lets you intercept and modify beans during creation. Every `@Transactional`, `@Async`, `@Cacheable`, and `@Scheduled` annotation works because of BeanPostProcessors that wrap your beans in proxies. Custom BeanPostProcessors can: add logging to all repositories, validate that services have required annotations, dynamically register metrics, or add performance monitoring to specific bean types.",
+
+      "## Step 10: @Lazy — Deferring Bean Creation",
+
+      "**@Lazy** defers bean creation until the bean is first accessed, instead of eagerly at startup. Use on beans with expensive initialization (e.g., connecting to a remote service). On a `@Bean` method or class: creates a proxy at startup, initializes on first use. On a constructor parameter: `public MyService(@Lazy HeavyDependency dep)` — the dependency is proxied and created on first method call. Warning: `@Lazy` can mask startup failures that would otherwise surface immediately.",
+    ],
+    code: `// === Complete Bean Lifecycle & Configuration ===
+
+// ============================================================
+// STEP 1: Lifecycle Hooks — @PostConstruct & @PreDestroy
+// ============================================================
 @Component
 public class CacheWarmer {
+
+    private final ProductRepository productRepository;
+
+    public CacheWarmer(ProductRepository productRepository) {
+        this.productRepository = productRepository;
+    }
+
     @PostConstruct
-    public void init() { System.out.println("Loading hot data into cache..."); }
+    public void warmCache() {
+        // Runs AFTER all dependencies are injected
+        // Perfect for: cache warming, connection validation, initial data load
+        List<Product> hotProducts = productRepository.findTop100ByOrderByViewsDesc();
+        CacheManager.preload(hotProducts);
+        System.out.println("Cache warmed with " + hotProducts.size() + " products");
+    }
+
     @PreDestroy
-    public void cleanup() { System.out.println("Flushing cache before shutdown..."); }
+    public void flushCache() {
+        // Runs on app shutdown (SIGTERM, ApplicationContext.close())
+        // Perfect for: flushing caches, closing connections, canceling schedulers
+        CacheManager.flush();
+        System.out.println("Cache flushed before shutdown");
+    }
 }
 
-// 2. @ConfigurationProperties — Type-Safe Config
+// ============================================================
+// STEP 2: @ConfigurationProperties — Type-Safe Config Binding
+// ============================================================
 // application.yml:
 // app:
 //   payment:
 //     gateway-url: https://api.stripe.com/v1
-//     timeout: 30s
-//     retry-count: 3
+//     timeout: 30s               # Binds to java.time.Duration
+//     retry-count: 3             # Binds to int
+//     allowed-currencies:        # Binds to List<String>
+//       - USD
+//       - EUR
+//       - GBP
+//     rate-limits:               # Binds to Map<String, Integer>
+//       default: 100
+//       premium: 1000
 
 @ConfigurationProperties(prefix = "app.payment")
-@Validated
+@Validated   // Enables Jakarta Bean Validation on startup
 public record PaymentProperties(
-    @NotBlank String gatewayUrl, Duration timeout, int retryCount
+    @NotBlank String gatewayUrl,
+    Duration timeout,                            // "30s" → Duration.ofSeconds(30)
+    @Min(1) @Max(10) int retryCount,
+    List<String> allowedCurrencies,              // YAML list → Java List
+    Map<String, Integer> rateLimits              // YAML map → Java Map
 ) {}
 
-// 3. Injecting it
+// Enable config properties scanning (in main class or @Configuration):
+// @EnableConfigurationProperties(PaymentProperties.class)
+
+// ============================================================
+// STEP 3: Injecting @ConfigurationProperties
+// ============================================================
 @Service
 public class PaymentService {
     private final PaymentProperties props;
-    public PaymentService(PaymentProperties props) { this.props = props; }
-    public void charge(BigDecimal amount) {
-        System.out.println("Calling " + props.gatewayUrl() + " timeout=" + props.timeout());
+
+    // Constructor injection — props is immutable
+    public PaymentService(PaymentProperties props) {
+        this.props = props;
+    }
+
+    public void charge(BigDecimal amount, String currency) {
+        if (!props.allowedCurrencies().contains(currency)) {
+            throw new IllegalArgumentException("Currency not supported: " + currency);
+        }
+        System.out.println("Calling " + props.gatewayUrl()
+            + " timeout=" + props.timeout()
+            + " retries=" + props.retryCount());
     }
 }
 
-// 4. Custom @Bean for Third-Party Libraries
+// ============================================================
+// STEP 4: Custom @Bean for Third-Party Libraries
+// ============================================================
 @Configuration
 public class HttpClientConfig {
+
     @Bean
-    public RestClient restClient() {
+    public RestClient restClient(PaymentProperties props) {
+        // @Bean method receives other beans as parameters (auto-injected)
         return RestClient.builder()
-                .baseUrl("https://api.example.com")
+                .baseUrl(props.gatewayUrl())
                 .defaultHeader("Accept", "application/json")
+                .defaultHeader("X-Api-Version", "2024-01")
+                .build();
+    }
+
+    @Bean
+    public ObjectMapper objectMapper() {
+        return JsonMapper.builder()
+                .addModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 .build();
     }
 }
 
-// 5. Prototype Scope
-@Component @Scope("prototype")
+// ============================================================
+// STEP 5: Bean Scopes — Singleton vs Prototype
+// ============================================================
+// Singleton (default) — ONE instance, shared everywhere
+@Component
+public class OrderService {
+    // All requests share this instance — keep stateless!
+    private final OrderRepository orderRepository;
+    public OrderService(OrderRepository orderRepository) {
+        this.orderRepository = orderRepository;
+    }
+}
+
+// Prototype — NEW instance every time
+@Component
+@Scope("prototype")
 public class RequestTracer {
     private final String traceId = UUID.randomUUID().toString();
+    private final Instant startedAt = Instant.now();
+    public String getTraceId() { return traceId; }
+}
+
+// ============================================================
+// STEP 6: Fixing the Scope Injection Pitfall
+// ============================================================
+@Service
+public class AuditService {
+    // WRONG: This captures ONE prototype instance forever
+    // private final RequestTracer tracer;
+
+    // CORRECT: ObjectProvider creates a new instance each call
+    private final ObjectProvider<RequestTracer> tracerProvider;
+
+    public AuditService(ObjectProvider<RequestTracer> tracerProvider) {
+        this.tracerProvider = tracerProvider;
+    }
+
+    public void logAction(String action) {
+        RequestTracer tracer = tracerProvider.getObject(); // New instance!
+        System.out.println("[" + tracer.getTraceId() + "] " + action);
+    }
+}
+
+// ============================================================
+// STEP 7: Conditional Bean Creation
+// ============================================================
+@Configuration
+public class CacheConfig {
+
+    @Bean
+    @ConditionalOnProperty(name = "app.cache.type", havingValue = "redis")
+    public CacheService redisCacheService() {
+        return new RedisCacheService();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(CacheService.class)  // Default fallback
+    public CacheService inMemoryCacheService() {
+        return new InMemoryCacheService();
+    }
 }`,
-    practice: "Create a @ConfigurationProperties class binding 'app.notification' with from-email, smtp-host, smtp-port, and enabled. Add validation.",
-    solution: `// @ConfigurationProperties(prefix = "app.notification")
-// @Validated
-// public record NotificationProperties(
-//     @NotBlank String fromEmail, @NotBlank String smtpHost,
-//     @Min(1) @Max(65535) int smtpPort, boolean enabled
-// ) {}
-// Inject into a service and check props.enabled() before sending.`
+    practice: "You have a singleton ReportService that needs a unique RequestContext for each HTTP request. RequestContext is @Scope(\"request\"). If you inject it directly, what happens? Write code showing both the broken version and the fix using ObjectProvider.",
+    solution: `// BROKEN — singleton captures one RequestContext instance at startup:
+// @Service
+// public class ReportService {
+//     private final RequestContext ctx;  // Always the SAME instance!
+//     public ReportService(RequestContext ctx) { this.ctx = ctx; }
+// }
+
+// FIXED — ObjectProvider resolves a new instance per request:
+// @Service
+// public class ReportService {
+//     private final ObjectProvider<RequestContext> ctxProvider;
+//     public ReportService(ObjectProvider<RequestContext> ctxProvider) {
+//         this.ctxProvider = ctxProvider;
+//     }
+//     public Report generate() {
+//         RequestContext ctx = ctxProvider.getObject(); // Correct scope!
+//         return new Report(ctx.getUserId(), ctx.getTimestamp());
+//     }
+// }`
   },
   {
     time: "Hour 5",
     title: "Spring Data JPA & Hibernate Foundations",
     concept: [
-      "**JPA (Jakarta Persistence API)** is a spec for ORM in Java. **Hibernate** is the default implementation in Spring Boot. You define Java entity classes that map to database tables, and Hibernate generates SQL. JPA is defined under the `jakarta.persistence` package (migrated from `javax.persistence` in Jakarta EE 9). Hibernate implements the JPA spec but also provides extensions like `@Formula`, `@NaturalId`, and `@BatchSize` that go beyond the standard.",
-      "**Entities & Table Mapping:** Annotate a class with `@Entity` and `@Table`. `@Id` marks the primary key, `@GeneratedValue(strategy = GenerationType.IDENTITY)` lets the DB auto-increment it. Other strategies: `SEQUENCE` (uses a DB sequence — preferred for PostgreSQL for batch insert performance), `TABLE` (portable but slow), and `AUTO` (provider picks). Always use `@Column` to explicitly define constraints: `nullable`, `length`, `unique`, and `updatable` — don't rely on Hibernate defaults.",
-      "**Entity Lifecycle States:** Every JPA entity is in one of four states: **New/Transient** (not yet persisted, no ID), **Managed** (attached to the persistence context, changes auto-tracked), **Detached** (was managed but context is closed), **Removed** (scheduled for deletion). Understanding these states is key to avoiding `LazyInitializationException` and unexpected UPDATE queries.",
-      "**Spring Data JPA Repositories:** Extend `JpaRepository<Entity, IdType>` for full CRUD — `save()`, `findById()`, `findAll()`, `deleteById()`, `count()`, `existsById()`. Declare **derived query methods** by naming convention: `findByEmailAndStatus(String email, Status status)` — Spring parses the method name and generates SQL. Keywords include `And`, `Or`, `Between`, `LessThan`, `GreaterThan`, `Like`, `In`, `OrderBy`, `Not`, `IsNull`, `Containing`.",
-      "**@Query and JPQL:** For complex queries, use `@Query` with JPQL (operates on entity classes/fields, not table/column names) or native SQL (`nativeQuery = true`). JPQL supports `JOIN FETCH` for eager loading, `DISTINCT` for deduplication, and named parameters (`:name`) or positional parameters (`?1`). For write operations, combine `@Query` with `@Modifying` and `@Transactional`.",
-      "**Projections:** For performance, avoid loading entire entities when you only need 2-3 fields. Use **interface projections** (Spring creates a proxy implementing your interface with getters), **class-based projections** (DTOs in `@Query` constructors: `SELECT new com.app.dto.UserSummary(u.id, u.name) FROM User u`), or **dynamic projections** where the return type is a generic `<T>` parameter.",
-    ],
-    code: `// === Spring Data JPA Foundations ===
+      "## Step 1: What Is ORM and Why JPA?",
 
-// 1. Entity Definition
+      "**Object-Relational Mapping (ORM)** bridges the gap between Java objects and relational database tables. Without ORM, you write raw SQL, manually map `ResultSet` rows to Java objects, handle type conversions, and manage connections — tedious and error-prone. ORM automates this: you define Java classes (entities), and the framework generates SQL `INSERT`, `SELECT`, `UPDATE`, `DELETE` statements automatically.",
+
+      "**JPA (Jakarta Persistence API)** is a *specification* — it defines annotations (`@Entity`, `@Id`, `@Column`) and interfaces (`EntityManager`, `Query`) but contains no implementation. **Hibernate** is the default *implementation* of JPA in Spring Boot. Think of JPA like the JDBC `Driver` interface and Hibernate like the PostgreSQL `Driver` implementation. You code against JPA annotations, and Hibernate does the actual SQL generation and execution.",
+
+      "**JPA vs Hibernate Extensions:** JPA standard annotations (`jakarta.persistence.*`) are portable — you can swap Hibernate for EclipseLink. Hibernate extensions (`org.hibernate.annotations.*`) add features JPA doesn't cover: `@NaturalId` (business key lookup), `@Formula` (derived column from SQL expression), `@BatchSize` (batch lazy loading), `@SQLDelete` (soft delete), `@Where` (default filters). Use JPA annotations when possible; use Hibernate extensions when you need the extra power.",
+
+      "## Step 2: Entity Mapping — From Class to Table",
+
+      "**@Entity** marks a class as a JPA entity. Requirements: (1) Must have a no-arg constructor (can be `protected`). (2) Must not be `final` (Hibernate creates proxy subclasses for lazy loading). (3) Must have at least one `@Id` field. (4) Fields cannot be `final` (Hibernate sets them via reflection). The class name maps to the table name by default — `User` → `user` table.",
+
+      "**@Table(name = \"users\")** explicitly sets the table name. Always use this to avoid surprises (e.g., `User` is a reserved word in some databases). Additional attributes: `schema`, `uniqueConstraints` (composite unique keys), `indexes` (database indexes for performance).",
+
+      "**@Id and @GeneratedValue:** `@Id` marks the primary key field. `@GeneratedValue` tells Hibernate how to generate IDs. Strategies: (1) `IDENTITY` — uses the database's auto-increment (`SERIAL` in PostgreSQL, `AUTO_INCREMENT` in MySQL). Simple but prevents JDBC batch inserts because Hibernate must execute each INSERT immediately to get the generated ID. (2) `SEQUENCE` — uses a database sequence (`CREATE SEQUENCE`). Preferred for PostgreSQL — Hibernate pre-allocates IDs (`allocationSize = 50`) enabling batch inserts. (3) `TABLE` — uses a separate table to track IDs. Portable but slow due to row-level locking. (4) `AUTO` — Hibernate picks based on the database dialect.",
+
+      "**@Column — Explicit Constraints:** `@Column(nullable = false, length = 100, unique = true, updatable = false)`. `nullable = false` → generates `NOT NULL` constraint. `length = 100` → `VARCHAR(100)`. `unique = true` → `UNIQUE` constraint. `updatable = false` → prevents Hibernate from including this column in UPDATE statements (e.g., `createdAt`). `columnDefinition = \"TEXT\"` → use exact SQL type. Always define `@Column` explicitly — Hibernate's defaults (nullable, VARCHAR(255)) are often wrong for production.",
+
+      "**@Enumerated:** Map Java enums to database columns. `@Enumerated(EnumType.STRING)` stores the enum name as a string (`ACTIVE`, `INACTIVE`) — **always use this**. `@Enumerated(EnumType.ORDINAL)` stores the enum's position (0, 1, 2) — dangerous because reordering the enum silently corrupts data.",
+
+      "## Step 3: Entity Lifecycle States — The Persistence Context",
+
+      "**The Persistence Context** (also called the **First-Level Cache**) is a HashMap-like structure that Hibernate maintains per transaction. It maps entity ID → entity instance. Every entity exists in one of four states relative to this context:",
+
+      "**State 1 — New/Transient:** The entity was created with `new User()` but has not been persisted. It has no ID. The persistence context doesn't know about it. Calling `repository.save(user)` transitions it to Managed.",
+
+      "**State 2 — Managed:** The entity is tracked by the persistence context. Any changes to its fields are *automatically detected* and synchronized to the database when the transaction commits — this is called **dirty checking**. You do NOT need to call `save()` again after modifying a managed entity. Example: `User user = repository.findById(1L).get(); user.setName(\"Updated\");` — Hibernate sees the name changed at flush time and generates `UPDATE users SET name = 'Updated' WHERE id = 1`.",
+
+      "**State 3 — Detached:** The entity was managed but the persistence context closed (e.g., the `@Transactional` method returned). The entity still has an ID and data, but Hibernate no longer tracks it. Modifying a detached entity does nothing until you re-attach it via `repository.save(detachedUser)` (which calls `EntityManager.merge()`). Accessing a lazy-loaded collection on a detached entity throws `LazyInitializationException`.",
+
+      "**State 4 — Removed:** The entity is scheduled for deletion. After `repository.delete(user)`, the entity is marked Removed. On transaction commit, Hibernate generates `DELETE FROM users WHERE id = ?`.",
+
+      "## Step 4: Dirty Checking & Flushing — How Hibernate Detects Changes",
+
+      "**Dirty Checking:** When an entity enters the Managed state, Hibernate takes a snapshot of all its field values. At flush time (transaction commit or before a query), Hibernate compares the current field values against the snapshot. If anything changed, it generates an `UPDATE` statement. This means you never call `save()` on an entity you loaded within the same transaction — changes are detected automatically.",
+
+      "**Flush Timing:** Hibernate flushes (syncs changes to the database) at: (1) Transaction commit. (2) Before any JPQL/native query (to ensure the query sees the latest data). (3) Explicitly via `entityManager.flush()`. The flush mode can be set to `AUTO` (default) or `COMMIT` (only on commit, skips pre-query flush — better performance but stale query results possible).",
+
+      "**Performance Implication:** For read-only operations, dirty checking is pure overhead — Hibernate snapshots every loaded entity and compares all fields at flush time. Use `@Transactional(readOnly = true)` to disable dirty checking, reducing CPU and memory usage for read-heavy services.",
+
+      "## Step 5: Spring Data JPA Repository Hierarchy",
+
+      "**Repository Hierarchy:** `Repository<T, ID>` (marker interface) → `CrudRepository<T, ID>` (basic CRUD: `save`, `findById`, `delete`, `count`) → `ListCrudRepository<T, ID>` (returns `List` instead of `Iterable`) → `PagingAndSortingRepository<T, ID>` (adds `findAll(Pageable)`) → `JpaRepository<T, ID>` (adds `flush()`, `saveAndFlush()`, `deleteInBatch()`, `getById()`). Always extend `JpaRepository` — it includes everything.",
+
+      "**How Spring Generates Implementations:** You write an interface, Spring generates the implementation at startup using **JDK dynamic proxies**. The `SimpleJpaRepository` class provides the default implementation for all CRUD methods. Spring's `JpaRepositoryFactoryBean` scans for interfaces extending `Repository` and creates proxy beans. This is why you never write `class UserRepositoryImpl implements UserRepository`.",
+
+      "## Step 6: Derived Query Methods — SQL from Method Names",
+
+      "**How It Works:** Spring parses your method name using a set of keywords and generates JPQL. Method: `findByEmailAndStatus(String email, Status status)` → JPQL: `SELECT u FROM User u WHERE u.email = ?1 AND u.status = ?2`. Spring matches method name prefixes (`findBy`, `countBy`, `deleteBy`, `existsBy`) and property expressions.",
+
+      "**Available Keywords:** `And`, `Or` — logical operators. `Between`, `LessThan`, `LessThanEqual`, `GreaterThan`, `GreaterThanEqual` — comparisons. `IsNull`, `IsNotNull` — null checks. `Like`, `NotLike`, `Containing`, `StartingWith`, `EndingWith` — string matching. `In`, `NotIn` — collection membership. `True`, `False` — boolean checks. `OrderBy...Asc/Desc` — sorting. `Top5`, `First10` — limiting results. `Distinct` — deduplication.",
+
+      "**When Derived Queries Break Down:** Method names like `findByUserProfileAddressCityNameContainingAndStatusNotAndCreatedAtAfterOrderByLastNameAsc` are unreadable. Rule of thumb: if the method name exceeds ~3 conditions, switch to `@Query` with JPQL.",
+
+      "## Step 7: @Query — JPQL and Native SQL",
+
+      "**JPQL (Jakarta Persistence Query Language):** Operates on entity classes and fields, NOT table names and columns. `SELECT u FROM User u WHERE u.email = :email` — here `User` is the entity class name and `email` is the Java field name. Hibernate translates this to the correct SQL based on your `@Table` and `@Column` annotations. JPQL supports: `SELECT`, `WHERE`, `JOIN`, `LEFT JOIN`, `GROUP BY`, `HAVING`, `ORDER BY`, `DISTINCT`, `CASE WHEN`, subqueries, and aggregate functions (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`).",
+
+      "**Named vs Positional Parameters:** Named: `@Query(\"SELECT u FROM User u WHERE u.email = :email\")` with `@Param(\"email\")`. Positional: `@Query(\"SELECT u FROM User u WHERE u.email = ?1\")`. Named parameters are more readable and resistant to refactoring errors.",
+
+      "**Native SQL:** `@Query(value = \"SELECT * FROM users WHERE created_at > :since\", nativeQuery = true)`. Use when you need database-specific features: PostgreSQL `jsonb` operators, window functions (`ROW_NUMBER()`, `RANK()`), CTEs (`WITH`), full-text search (`to_tsvector`). Downside: not portable across databases.",
+
+      "**@Modifying + @Transactional:** For `UPDATE` and `DELETE` queries, add `@Modifying` to tell Spring this is not a SELECT. Add `@Modifying(clearAutomatically = true)` to clear the persistence context after the update — otherwise, cached entities in the context may have stale data. Always pair with `@Transactional`.",
+
+      "## Step 8: Projections — Loading Only What You Need",
+
+      "**Why Projections Matter:** Loading a full `User` entity with 20 fields when you only need `id` and `name` wastes memory, bandwidth, and CPU (Hibernate snapshots all 20 fields for dirty checking). Projections let you load partial data.",
+
+      "**Interface Projection:** Define an interface with getter methods: `interface UserSummary { String getName(); String getEmail(); }`. Use as return type: `List<UserSummary> findByStatus(Status status)`. Spring generates a proxy that maps only the specified columns. SQL generated: `SELECT name, email FROM users WHERE status = ?`.",
+
+      "**Class-Based (DTO) Projection:** Use a record/class directly in JPQL: `@Query(\"SELECT new com.app.dto.UserSummary(u.id, u.name) FROM User u\")`. The constructor must match exactly. Can also use Java Records: `record UserSummary(Long id, String name) {}`.",
+
+      "**Dynamic Projection:** Use a generic return type: `<T> List<T> findByStatus(Status status, Class<T> type)`. Call with different projections: `repo.findByStatus(ACTIVE, UserSummary.class)` or `repo.findByStatus(ACTIVE, User.class)` for full entity.",
+
+      "## Step 9: @PrePersist, @PreUpdate — Entity Callbacks",
+
+      "**Entity Callbacks** are lifecycle methods that Hibernate calls automatically at specific points: `@PrePersist` — before INSERT (set `createdAt`). `@PostPersist` — after INSERT. `@PreUpdate` — before UPDATE (set `updatedAt`). `@PostUpdate` — after UPDATE. `@PreRemove` — before DELETE. `@PostLoad` — after SELECT. These are useful for audit fields, validation, or computed fields. For shared audit logic, use `@MappedSuperclass` with a `BaseEntity`.",
+
+      "## Step 10: Common Pitfalls & Best Practices",
+
+      "**Pitfall 1 — LazyInitializationException:** Accessing a `@OneToMany` collection on a detached entity (outside `@Transactional`). Fix: load the collection eagerly with `JOIN FETCH` in the query, or use `@EntityGraph`.",
+
+      "**Pitfall 2 — No-Arg Constructor:** JPA requires a no-arg constructor. If you add a parameterized constructor, you must also add a `protected` no-arg constructor. Hibernate uses it to instantiate entities via reflection.",
+
+      "**Pitfall 3 — equals() and hashCode():** Default `Object.equals()` compares references. Two `User` objects loaded in different sessions with the same ID are not `equals()`. Implement `equals`/`hashCode` based on the business key (e.g., `email`) or the `@Id` field (but handle transient entities carefully since their ID is `null` before persist).",
+
+      "**Best Practices:** (1) Use `@Transactional(readOnly = true)` on read methods. (2) Always define `@Column` constraints explicitly. (3) Use `SEQUENCE` generation strategy for PostgreSQL. (4) Use DTOs for API responses — never expose entities directly. (5) Enable SQL logging in dev: `spring.jpa.show-sql=true` + `spring.jpa.properties.hibernate.format_sql=true`. (6) Use `spring.jpa.open-in-view=false` in production.",
+    ],
+    code: `// === Complete Spring Data JPA & Hibernate Setup ===
+
+// ============================================================
+// STEP 1: Entity Definition with Full Annotations
+// ============================================================
 @Entity
-@Table(name = "users")
+@Table(name = "users", indexes = {
+    @Index(name = "idx_users_email", columnList = "email"),
+    @Index(name = "idx_users_status", columnList = "status")
+})
 public class User {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "user_seq")
+    @SequenceGenerator(name = "user_seq", sequenceName = "users_id_seq", allocationSize = 50)
     private Long id;
 
     @Column(nullable = false, length = 100)
     private String name;
 
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false, unique = true, length = 255)
     private String email;
 
     @Column(nullable = false)
     private int age;
 
+    @Enumerated(EnumType.STRING)    // Store as "ACTIVE", not 0
+    @Column(nullable = false, length = 20)
+    private Status status = Status.ACTIVE;
+
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
 
-    @PrePersist
-    protected void onCreate() { this.createdAt = Instant.now(); }
+    @Column(name = "updated_at")
+    private Instant updatedAt;
 
-    // Constructors, getters, setters...
-    public User() {}
-    public User(String name, String email, int age) {
-        this.name = name; this.email = email; this.age = age;
+    // Entity callbacks — called automatically by Hibernate
+    @PrePersist
+    protected void onCreate() {
+        this.createdAt = Instant.now();
+        this.updatedAt = Instant.now();
     }
+
+    @PreUpdate
+    protected void onUpdate() {
+        this.updatedAt = Instant.now();
+    }
+
+    // Required no-arg constructor (can be protected)
+    protected User() {}
+
+    public User(String name, String email, int age) {
+        this.name = name;
+        this.email = email;
+        this.age = age;
+    }
+
+    // Getters and setters...
+    public Long getId() { return id; }
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public int getAge() { return age; }
+    public void setAge(int age) { this.age = age; }
+    public Status getStatus() { return status; }
+    public void setStatus(Status status) { this.status = status; }
+    public Instant getCreatedAt() { return createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
+
+    public enum Status { ACTIVE, INACTIVE, SUSPENDED }
 }
 
-// 2. Repository Interface — Full CRUD for Free
+// ============================================================
+// STEP 2: Repository Interface — Full CRUD + Custom Queries
+// ============================================================
 public interface UserRepository extends JpaRepository<User, Long> {
+
+    // Derived queries — Spring generates SQL from method name
     Optional<User> findByEmail(String email);
     List<User> findByAgeGreaterThanEqual(int minAge);
+    List<User> findByStatusAndAgeBetween(User.Status status, int minAge, int maxAge);
     boolean existsByEmail(String email);
+    long countByStatus(User.Status status);
+    List<User> findTop5ByOrderByCreatedAtDesc();
 
+    // JPQL — operates on entity fields, not table columns
     @Query("SELECT u FROM User u WHERE u.name LIKE %:keyword%")
     List<User> searchByName(@Param("keyword") String keyword);
 
+    // JPQL with JOIN FETCH (prevents N+1 for relationships)
+    @Query("SELECT u FROM User u LEFT JOIN FETCH u.orders WHERE u.id = :id")
+    Optional<User> findByIdWithOrders(@Param("id") Long id);
+
+    // Native SQL — for database-specific features
     @Query(value = "SELECT * FROM users WHERE created_at > :since", nativeQuery = true)
     List<User> findRecentUsers(@Param("since") Instant since);
+
+    // Bulk UPDATE — @Modifying required for UPDATE/DELETE queries
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE User u SET u.status = :newStatus WHERE u.status = :oldStatus")
+    int bulkUpdateStatus(@Param("oldStatus") User.Status oldStatus,
+                         @Param("newStatus") User.Status newStatus);
+
+    // Interface Projection — loads only specified fields
+    List<UserSummary> findByStatus(User.Status status);
 }
 
-// 3. Service Using the Repository
-@Service
-@Transactional(readOnly = true)
-public class UserService {
-    private final UserRepository userRepository;
-    public UserService(UserRepository userRepository) { this.userRepository = userRepository; }
+// ============================================================
+// STEP 3: Interface Projection (loads fewer columns)
+// ============================================================
+public interface UserSummary {
+    Long getId();
+    String getName();
+    String getEmail();
+    // SQL generated: SELECT id, name, email FROM users WHERE status = ?
+}
 
+// ============================================================
+// STEP 4: Service Layer with Transactional Management
+// ============================================================
+@Service
+@Transactional(readOnly = true)    // Default: read-only (no dirty checking)
+public class UserService {
+
+    private final UserRepository userRepository;
+
+    public UserService(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
+
+    // Read operation — inherits @Transactional(readOnly = true)
     public UserResponse findById(Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", id));
-        return new UserResponse(user.getId(), user.getName(), user.getEmail(), user.getAge(), user.getCreatedAt());
+        return toResponse(user);
     }
 
+    // Write operation — overrides with @Transactional (read-write)
     @Transactional
     public UserResponse create(CreateUserRequest req) {
-        if (userRepository.existsByEmail(req.email()))
+        if (userRepository.existsByEmail(req.email())) {
             throw new DuplicateResourceException("Email already registered");
-        User saved = userRepository.save(new User(req.name(), req.email(), req.age()));
-        return new UserResponse(saved.getId(), saved.getName(), saved.getEmail(), saved.getAge(), saved.getCreatedAt());
+        }
+        User user = new User(req.name(), req.email(), req.age());
+        User saved = userRepository.save(user);  // Transitions to Managed state
+        return toResponse(saved);
+    }
+
+    // Dirty checking in action — no save() needed!
+    @Transactional
+    public UserResponse update(Long id, UpdateUserRequest req) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User", id));
+        // Entity is Managed — Hibernate detects these changes automatically
+        user.setName(req.name());
+        user.setEmail(req.email());
+        // No repository.save() needed! Hibernate generates UPDATE on commit.
+        return toResponse(user);
+    }
+
+    private UserResponse toResponse(User user) {
+        return new UserResponse(
+            user.getId(), user.getName(), user.getEmail(),
+            user.getAge(), user.getStatus(), user.getCreatedAt()
+        );
     }
 }`,
-    practice: "Write a derived query method that finds users by partial email domain (e.g., 'gmail.com') sorted by name ascending, then write the equivalent using @Query JPQL.",
-    solution: `// Approach 1: Derived Query Method
-// List<User> findByEmailContainingOrderByNameAsc(String domain);
-// Approach 2: JPQL
-// @Query("SELECT u FROM User u WHERE u.email LIKE %:domain% ORDER BY u.name ASC")
-// List<User> findByEmailDomain(@Param("domain") String domain);`
+    practice: "You have a User entity with 20 fields. Your API's `/api/users` list endpoint only needs id, name, and email. Write: (1) An interface projection, (2) A class-based DTO projection using @Query, and (3) A dynamic projection method that can return either. Explain why projections improve performance.",
+    solution: `// 1. Interface Projection:
+// public interface UserListView {
+//     Long getId();
+//     String getName();
+//     String getEmail();
+// }
+// List<UserListView> findAllBy(); // Spring selects only id, name, email
+
+// 2. Class-Based DTO Projection:
+// public record UserListDto(Long id, String name, String email) {}
+// @Query("SELECT new com.app.dto.UserListDto(u.id, u.name, u.email) FROM User u")
+// List<UserListDto> findAllAsDto();
+
+// 3. Dynamic Projection:
+// <T> List<T> findAllBy(Class<T> type);
+// repo.findAllBy(UserListView.class);  // Returns interface projection
+// repo.findAllBy(User.class);           // Returns full entity
+
+// Performance: Projections reduce (1) network bandwidth (fewer bytes from DB),
+// (2) memory (smaller objects), (3) CPU (no dirty-checking snapshots for 20 fields),
+// (4) SQL complexity (SELECT 3 cols vs 20 cols + joins for eager relations).`
   },
   {
     time: "Hour 6",
