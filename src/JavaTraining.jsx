@@ -44,7 +44,7 @@ export default function JavaTraining() {
             <h1 className="text-2xl sm:text-3xl font-bold">Core Java — Production-Grade Mastery</h1>
           </div>
           <p className="text-slate-400 text-sm">
-            10 focused hours. Master JVM internals, OOP, generics, collections, Streams, functional programming, concurrency with virtual threads, CompletableFuture, java.time, NIO, and modern Java 21+ best practices.
+            15 focused hours. Master JVM internals, OOP, records, sealed classes, generics, collections, HashMap internals, equals/hashCode, Streams, functional programming, Runnable/Callable, locks, synchronizers, CompletableFuture, virtual threads, design patterns, memory management, GC tuning, reflection, and modern Java 21+ best practices.
           </p>
           <div className="mt-4 h-2 bg-slate-800 rounded-full overflow-hidden">
             <div className="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 transition-all duration-300" style={{ width: `${progress}%` }} />

@@ -1351,4 +1351,985 @@ public class LogAnalyzer {
     }
 }`,
   },
+  {
+    time: "Hour 11",
+    title: "HashMap Internals, equals/hashCode Contract & ConcurrentHashMap",
+    concept: [
+      "**HashMap internals:** A HashMap is an array of 'buckets' (default 16). When you call `put(key, value)`, Java: (1) Computes `key.hashCode()`. (2) Applies a spread function to reduce collisions. (3) Calculates bucket index: `(n-1) & hash`. (4) Stores a Node(hash, key, value, next) in that bucket. If two keys map to the same bucket, they form a linked list (or a red-black tree if chain length exceeds 8).",
+      "**Load factor and rehashing:** The default load factor is 0.75 — when 75% of buckets are occupied, HashMap doubles its capacity (rehash). Rehashing is expensive: all entries are redistributed. Initial capacity matters: if you know you'll store 1000 entries, allocate `new HashMap<>(1334)` (1000/0.75) to avoid rehashing. Always size your maps intentionally in performance-critical code.",
+      "**The equals/hashCode contract** is CRITICAL: (1) If `a.equals(b)` is true, then `a.hashCode() == b.hashCode()` MUST be true. (2) If hashCodes differ, equals MUST return false. (3) If hashCodes are the same, equals CAN return false (collision). Breaking this contract causes lost entries, duplicate keys, and silent data corruption. Records auto-generate correct equals/hashCode.",
+      "**Implementing equals correctly:** (1) Check `this == other` (identity). (2) Check `other instanceof MyClass obj` (pattern match). (3) Compare each significant field. For objects: `Objects.equals(a, b)`. For arrays: `Arrays.equals()`. For doubles: `Double.compare()`. Override in BOTH equals AND hashCode. Use `@Override` annotation to catch typos. Never depend on default Object.equals (reference identity) for value objects.",
+      "**hashCode best practices:** Use `Objects.hash(field1, field2, ...)` for convenience, or manual computation for performance: `31 * hash + field.hashCode()`. The multiplier 31 is a prime that enables bitwise optimization. Use the same fields in hashCode as in equals. Immutable fields are ideal — mutable hashCodes can 'lose' entries in HashSet/HashMap if the key mutates after insertion.",
+      "**ConcurrentHashMap** is the thread-safe alternative to HashMap. It uses segment-level locking (Java 8+: CAS + synchronized on individual buckets) — much faster than `Collections.synchronizedMap()` which locks the entire map. Key atomic methods: `computeIfAbsent()`, `merge()`, `putIfAbsent()`. Use for caches, counters, and shared state. Never iterate and modify a regular HashMap concurrently — use ConcurrentHashMap.",
+    ],
+    code: `import java.util.*;
+
+// === HashMap Internals ===
+
+// 1. How HashMap stores entries (conceptual view)
+// Bucket[0] -> null
+// Bucket[1] -> Node("alice", 95) -> Node("bob", 87) -> null  (collision!)
+// Bucket[2] -> Node("charlie", 92) -> null
+// Bucket[3] -> null
+// ...
+// Bucket[15] -> Node("dave", 78) -> null
+
+// When chain length > 8, linked list → red-black tree (O(n) → O(log n))
+
+// 2. Correct equals() and hashCode() implementation
+public class Employee {
+    private final String id;
+    private final String name;
+    private final String department;
+
+    public Employee(String id, String name, String department) {
+        this.id = id;
+        this.name = name;
+        this.department = department;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;                          // Step 1: identity
+        if (!(o instanceof Employee emp)) return false;      // Step 2: type check
+        return Objects.equals(id, emp.id)                    // Step 3: field compare
+            && Objects.equals(name, emp.name)
+            && Objects.equals(department, emp.department);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, name, department);           // Same fields as equals
+    }
+}
+
+// 3. What happens if you break the contract
+var map = new HashMap<Employee, String>();
+var emp = new Employee("E001", "Alice", "Engineering");
+map.put(emp, "Senior Dev");
+
+// BAD: If equals uses 'id' but hashCode doesn't include 'id':
+// map.get(new Employee("E001", "Alice", "Engineering"))
+// → could return null! (different bucket due to hashCode mismatch)
+
+// 4. Sizing HashMap for performance
+// Bad: rehashes multiple times as it grows
+Map<String, Integer> small = new HashMap<>(); // default capacity 16
+
+// Good: pre-sized to avoid rehashing (expected 10,000 entries)
+Map<String, Integer> sized = new HashMap<>(13_334); // 10000 / 0.75
+
+// 5. ConcurrentHashMap — thread-safe, high-performance
+import java.util.concurrent.ConcurrentHashMap;
+
+ConcurrentHashMap<String, Integer> counters = new ConcurrentHashMap<>();
+
+// Atomic operations — no explicit locking needed
+counters.merge("pageViews", 1, Integer::sum);  // increment
+counters.computeIfAbsent("cache:user:42", k -> loadFromDb(k));
+
+// Safe concurrent iteration (weakly consistent)
+counters.forEach(4, (key, count) -> {  // parallelism threshold = 4
+    if (count > 1000) System.out.println(key + " is hot: " + count);
+});
+
+// Atomic compute
+counters.compute("errors", (key, val) -> (val == null) ? 1 : val + 1);
+
+// 6. LinkedHashMap for LRU Cache
+class LRUCache<K, V> extends LinkedHashMap<K, V> {
+    private final int maxSize;
+
+    public LRUCache(int maxSize) {
+        super(maxSize, 0.75f, true); // accessOrder = true
+        this.maxSize = maxSize;
+    }
+
+    @Override
+    protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+        return size() > maxSize; // evict oldest when over capacity
+    }
+}
+// var cache = new LRUCache<String, User>(100);
+// Automatically evicts least-recently-accessed entries
+
+// 7. IdentityHashMap — uses == instead of equals()
+IdentityHashMap<String, Integer> idMap = new IdentityHashMap<>();
+String a = new String("key");
+String b = new String("key");
+idMap.put(a, 1);
+idMap.put(b, 2);
+System.out.println(idMap.size()); // 2! (a != b by reference)
+
+// 8. WeakHashMap — entries removed when keys are GC'd
+WeakHashMap<Object, String> weakMap = new WeakHashMap<>();
+// Great for caches where you don't want to prevent GC`,
+    practice: "Create a custom Money class with amount (double) and currency (String). Implement equals/hashCode correctly. Then demonstrate: (1) Using Money as a HashMap key works correctly. (2) Show what breaks if hashCode is wrong. (3) Build a thread-safe MoneyCounter using ConcurrentHashMap that tracks total amounts per currency from multiple threads.",
+    solution: `import java.util.*;
+import java.util.concurrent.*;
+
+public class Money {
+    private final double amount;
+    private final String currency;
+
+    public Money(double amount, String currency) {
+        this.amount = amount;
+        this.currency = currency.toUpperCase();
+    }
+
+    public double amount() { return amount; }
+    public String currency() { return currency; }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Money m)) return false;
+        return Double.compare(m.amount, amount) == 0
+            && Objects.equals(currency, m.currency);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(Double.hashCode(amount), currency);
+    }
+
+    @Override
+    public String toString() {
+        return "%.2f %s".formatted(amount, currency);
+    }
+}
+
+// Thread-safe money counter
+class MoneyCounter {
+    private final ConcurrentHashMap<String, Double> totals = new ConcurrentHashMap<>();
+
+    public void add(Money money) {
+        totals.merge(money.currency(), money.amount(), Double::sum);
+    }
+
+    public double getTotal(String currency) {
+        return totals.getOrDefault(currency.toUpperCase(), 0.0);
+    }
+
+    public Map<String, Double> snapshot() {
+        return Map.copyOf(totals);
+    }
+}
+
+// Test:
+// var counter = new MoneyCounter();
+// Executors.newVirtualThreadPerTaskExecutor().invokeAll(
+//     List.of(
+//         () -> { counter.add(new Money(100, "USD")); return null; },
+//         () -> { counter.add(new Money(200, "USD")); return null; },
+//         () -> { counter.add(new Money(50, "EUR")); return null; }
+//     )
+// );
+// counter.getTotal("USD") → 300.0`,
+  },
+  {
+    time: "Hour 12",
+    title: "Runnable vs Callable, Locks, Semaphores & Synchronizers",
+    concept: [
+      "**Runnable vs Callable:** `Runnable` is a task that returns nothing and cannot throw checked exceptions: `() -> doWork()`. `Callable<V>` returns a result and CAN throw checked exceptions: `() -> computeResult()`. Submit Callable to an ExecutorService to get a `Future<V>`: `Future<Integer> f = executor.submit(() -> 42); int val = f.get();`. Use Callable when you need a result; Runnable when you don't.",
+      "**Future<V>** represents a pending result. Methods: `get()` blocks until done. `get(timeout, unit)` blocks with timeout. `isDone()` checks completion. `cancel(mayInterrupt)` attempts cancellation. Problem: `get()` is blocking — it defeats the purpose of async. Solution: use **CompletableFuture** for non-blocking chains, or use `invokeAll()` / `invokeAny()` for batch operations.",
+      "**ReentrantLock** is an explicit lock that gives more control than `synchronized`: tryLock (non-blocking attempt), timed lock, interruptible lock, and fairness policy. Pattern: `lock.lock(); try { ... } finally { lock.unlock(); }`. ALWAYS unlock in finally — a missed unlock causes deadlock. Use `tryLock()` to avoid indefinite waiting: `if (lock.tryLock(1, TimeUnit.SECONDS)) { try {...} finally { lock.unlock(); } }`.",
+      "**ReadWriteLock** allows multiple concurrent readers OR one exclusive writer. `ReadWriteLock rwl = new ReentrantReadWriteLock();`. Readers: `rwl.readLock().lock()` — many threads can read simultaneously. Writers: `rwl.writeLock().lock()` — blocks all readers and other writers. **StampedLock** (Java 8+) adds optimistic reads: `long stamp = lock.tryOptimisticRead();` — no blocking, but must validate after reading.",
+      "**Synchronizers** from java.util.concurrent: (1) **CountDownLatch** — one-time barrier, wait for N events: `latch.countDown()`, `latch.await()`. (2) **CyclicBarrier** — reusable, N threads wait for each other: `barrier.await()`. (3) **Semaphore** — rate limiter, controls access to N resources: `sem.acquire()`, `sem.release()`. (4) **Phaser** — flexible, reusable, dynamic participant count.",
+      "**ThreadLocal** gives each thread its own independent copy of a variable. Use for: per-thread context (user session, transaction ID), non-thread-safe objects (SimpleDateFormat), avoiding parameter passing through deep call stacks. Pattern: `private static final ThreadLocal<DateFormat> fmt = ThreadLocal.withInitial(() -> new SimpleDateFormat(\"yyyy-MM-dd\"));`. Clean up with `remove()` to prevent memory leaks in thread pools.",
+    ],
+    code: `import java.util.concurrent.*;
+import java.util.concurrent.locks.*;
+import java.util.*;
+
+// === Runnable vs Callable ===
+
+// 1. Runnable — no return value, no checked exceptions
+Runnable task = () -> System.out.println("Running on: " + Thread.currentThread());
+
+// Callable — returns a value, can throw exceptions
+Callable<Integer> computation = () -> {
+    Thread.sleep(1000);
+    return 42;
+};
+
+try (var executor = Executors.newFixedThreadPool(4)) {
+    // Submit Runnable
+    executor.execute(task);          // fire-and-forget
+    Future<?> f1 = executor.submit(task); // returns Future (no value)
+
+    // Submit Callable — get result via Future
+    Future<Integer> f2 = executor.submit(computation);
+    System.out.println("Result: " + f2.get()); // blocks until done → 42
+
+    // Batch operations
+    List<Callable<String>> tasks = List.of(
+        () -> fetchFromApi("service-a"),
+        () -> fetchFromApi("service-b"),
+        () -> fetchFromApi("service-c")
+    );
+    List<Future<String>> results = executor.invokeAll(tasks); // wait for ALL
+    String fastest = executor.invokeAny(tasks);   // return FIRST completed
+}
+
+// 2. Future with timeout
+Future<String> slow = executor.submit(() -> {
+    Thread.sleep(10_000);
+    return "done";
+});
+try {
+    String result = slow.get(2, TimeUnit.SECONDS); // timeout after 2s
+} catch (TimeoutException e) {
+    slow.cancel(true); // cancel the task
+    System.out.println("Task timed out, cancelled");
+}
+
+// === ReentrantLock ===
+
+// 3. Explicit locking with try-finally
+class BankAccount {
+    private double balance;
+    private final ReentrantLock lock = new ReentrantLock();
+
+    public void transfer(BankAccount to, double amount) {
+        // Acquire BOTH locks to prevent deadlock (ordered locking)
+        BankAccount first = System.identityHashCode(this) <
+            System.identityHashCode(to) ? this : to;
+        BankAccount second = first == this ? to : this;
+
+        first.lock.lock();
+        try {
+            second.lock.lock();
+            try {
+                if (this.balance >= amount) {
+                    this.balance -= amount;
+                    to.balance += amount;
+                }
+            } finally { second.lock.unlock(); }
+        } finally { first.lock.unlock(); }
+    }
+
+    // Non-blocking tryLock
+    public boolean tryWithdraw(double amount) {
+        if (lock.tryLock()) {
+            try {
+                if (balance >= amount) { balance -= amount; return true; }
+                return false;
+            } finally { lock.unlock(); }
+        }
+        return false; // couldn't acquire lock
+    }
+}
+
+// === ReadWriteLock ===
+
+// 4. Many readers, one writer
+class ThreadSafeCache<K, V> {
+    private final Map<K, V> map = new HashMap<>();
+    private final ReadWriteLock rwLock = new ReentrantReadWriteLock();
+
+    public V get(K key) {
+        rwLock.readLock().lock();          // multiple threads can read
+        try { return map.get(key); }
+        finally { rwLock.readLock().unlock(); }
+    }
+
+    public void put(K key, V value) {
+        rwLock.writeLock().lock();         // exclusive access
+        try { map.put(key, value); }
+        finally { rwLock.writeLock().unlock(); }
+    }
+}
+
+// === Synchronizers ===
+
+// 5. CountDownLatch — wait for N tasks to complete
+CountDownLatch latch = new CountDownLatch(3);
+for (int i = 0; i < 3; i++) {
+    executor.submit(() -> {
+        doWork();
+        latch.countDown(); // signal completion
+    });
+}
+latch.await(); // blocks until count reaches 0
+System.out.println("All 3 tasks done!");
+
+// 6. Semaphore — rate limiter (max N concurrent)
+Semaphore semaphore = new Semaphore(5); // max 5 concurrent DB connections
+void queryDatabase(String sql) throws Exception {
+    semaphore.acquire();   // blocks if 5 already active
+    try {
+        executeQuery(sql);
+    } finally {
+        semaphore.release(); // release permit
+    }
+}
+
+// 7. ThreadLocal — per-thread state
+private static final ThreadLocal<String> requestId =
+    ThreadLocal.withInitial(() -> UUID.randomUUID().toString());
+
+void handleRequest() {
+    requestId.set("REQ-" + System.nanoTime());
+    try {
+        processStep1(); // can access requestId.get() anywhere in this thread
+        processStep2();
+    } finally {
+        requestId.remove(); // CRITICAL: prevent memory leak in thread pools
+    }
+}`,
+    practice: "Build a ConnectionPool class using Semaphore (max 5 connections), ReentrantLock for thread-safe state, and Callable tasks. The pool should: acquire() returns a Connection (blocks if pool is exhausted), release(connection) returns it, and getActiveCount() returns current usage. Test with 10 virtual threads competing for 5 connections.",
+    solution: `import java.util.concurrent.*;
+import java.util.concurrent.locks.*;
+import java.util.*;
+
+record Connection(String id) implements AutoCloseable {
+    @Override public void close() { /* cleanup */ }
+}
+
+class ConnectionPool {
+    private final Queue<Connection> available = new LinkedList<>();
+    private final Set<Connection> inUse = new HashSet<>();
+    private final Semaphore semaphore;
+    private final ReentrantLock lock = new ReentrantLock();
+
+    public ConnectionPool(int maxSize) {
+        this.semaphore = new Semaphore(maxSize);
+        for (int i = 0; i < maxSize; i++) {
+            available.add(new Connection("conn-" + i));
+        }
+    }
+
+    public Connection acquire() throws InterruptedException {
+        semaphore.acquire(); // blocks if all connections in use
+        lock.lock();
+        try {
+            Connection conn = available.poll();
+            inUse.add(conn);
+            return conn;
+        } finally { lock.unlock(); }
+    }
+
+    public void release(Connection conn) {
+        lock.lock();
+        try {
+            inUse.remove(conn);
+            available.offer(conn);
+        } finally { lock.unlock(); }
+        semaphore.release();
+    }
+
+    public int getActiveCount() {
+        lock.lock();
+        try { return inUse.size(); }
+        finally { lock.unlock(); }
+    }
+}
+
+// Test: 10 threads, 5 connections
+// try (var exec = Executors.newVirtualThreadPerTaskExecutor()) {
+//     var pool = new ConnectionPool(5);
+//     var tasks = IntStream.range(0, 10).mapToObj(i ->
+//         (Callable<String>) () -> {
+//             var conn = pool.acquire();
+//             try {
+//                 Thread.sleep(500);
+//                 return "Task-" + i + " used " + conn.id();
+//             } finally { pool.release(conn); }
+//         }
+//     ).toList();
+//     exec.invokeAll(tasks).forEach(f -> System.out.println(f.get()));
+// }`,
+  },
+  {
+    time: "Hour 13",
+    title: "Design Patterns — Singleton, Builder, Factory, Strategy & Observer",
+    concept: [
+      "**Design patterns** are proven solutions to common software design problems. Java's OOP nature makes it a natural fit. The Gang of Four (GoF) categorized them into: **Creational** (Singleton, Builder, Factory, Prototype), **Structural** (Adapter, Decorator, Proxy, Facade), and **Behavioral** (Strategy, Observer, Command, Iterator, Template Method).",
+      "**Singleton** ensures only ONE instance of a class exists. Modern Java approach: use an **enum** — `enum Database { INSTANCE; }`. It's thread-safe, serialization-safe, and reflection-proof. The old double-checked locking pattern is error-prone and unnecessary. Spring beans are singletons by default via the IoC container, making this pattern mostly framework-managed now.",
+      "**Builder** constructs complex objects step by step. Perfect when a constructor would have many parameters (telescoping constructor anti-pattern). Pattern: `User.builder().name(\"Alice\").email(\"a@b.com\").age(30).build()`. The builder validates invariants in `build()`. In real projects, use **Lombok's @Builder** or **Records** with a mutable builder companion class.",
+      "**Factory Method** and **Abstract Factory** decouple object creation from usage. The client code calls `PaymentFactory.create(\"CREDIT_CARD\")` without knowing concrete classes. In Java, this often uses sealed interfaces + a static factory: `sealed interface Shape permits Circle, Rectangle { static Shape of(String type, double... args) { ... } }`. Spring's `@Bean` methods are factory methods.",
+      "**Strategy** encapsulates interchangeable algorithms behind an interface. In modern Java, use lambdas: `Function<Order, Double> discountStrategy = order -> order.total() * 0.1;`. Pass different strategies without creating class hierarchies. `Comparator` is THE classic Strategy pattern example — `list.sort(Comparator.comparing(Person::age))`.",
+      "**Observer** (pub-sub) notifies multiple subscribers when state changes. Java provides `Flow.Publisher/Subscriber` (Java 9+) for reactive streams. In practice, use event listeners, message queues (Kafka, RabbitMQ), or Spring's `@EventListener`. The **Decorator** pattern wraps objects to add behavior: Java I/O streams are the classic example — `new BufferedReader(new InputStreamReader(new FileInputStream(f)))`.",
+    ],
+    code: `// === Design Patterns in Modern Java ===
+
+// 1. Singleton — the enum way (thread-safe, serialization-safe)
+public enum AppConfig {
+    INSTANCE;
+
+    private final Map<String, String> properties = new HashMap<>();
+
+    public void set(String key, String value) { properties.put(key, value); }
+    public String get(String key) { return properties.get(key); }
+}
+// Usage: AppConfig.INSTANCE.get("db.url")
+
+// 2. Builder Pattern — for complex object construction
+public class HttpRequest {
+    private final String method;
+    private final String url;
+    private final Map<String, String> headers;
+    private final String body;
+    private final Duration timeout;
+
+    private HttpRequest(Builder b) {
+        this.method = b.method;
+        this.url = b.url;
+        this.headers = Map.copyOf(b.headers);
+        this.body = b.body;
+        this.timeout = b.timeout;
+    }
+
+    // Immutable getters
+    public String method()  { return method; }
+    public String url()     { return url; }
+
+    public static Builder builder(String method, String url) {
+        return new Builder(method, url);
+    }
+
+    public static class Builder {
+        private final String method;
+        private final String url;
+        private final Map<String, String> headers = new HashMap<>();
+        private String body;
+        private Duration timeout = Duration.ofSeconds(30);
+
+        private Builder(String method, String url) {
+            this.method = Objects.requireNonNull(method);
+            this.url = Objects.requireNonNull(url);
+        }
+
+        public Builder header(String k, String v) { headers.put(k, v); return this; }
+        public Builder body(String body)    { this.body = body; return this; }
+        public Builder timeout(Duration t)  { this.timeout = t; return this; }
+
+        public HttpRequest build() {
+            if (url.isBlank()) throw new IllegalStateException("URL required");
+            return new HttpRequest(this);
+        }
+    }
+}
+// Usage:
+// var req = HttpRequest.builder("POST", "/api/users")
+//     .header("Content-Type", "application/json")
+//     .body("{\\"name\\": \\"Alice\\"}")
+//     .timeout(Duration.ofSeconds(5))
+//     .build();
+
+// 3. Factory Pattern — sealed interface + static factory
+public sealed interface Notification permits EmailNotif, SmsNotif, PushNotif {
+    String send(String recipient, String message);
+
+    // Static factory method
+    static Notification of(String channel) {
+        return switch (channel.toLowerCase()) {
+            case "email" -> new EmailNotif();
+            case "sms"   -> new SmsNotif();
+            case "push"  -> new PushNotif();
+            default -> throw new IllegalArgumentException("Unknown: " + channel);
+        };
+    }
+}
+record EmailNotif() implements Notification {
+    @Override public String send(String to, String msg) {
+        return "Email sent to " + to;
+    }
+}
+record SmsNotif() implements Notification {
+    @Override public String send(String to, String msg) {
+        return "SMS sent to " + to;
+    }
+}
+record PushNotif() implements Notification {
+    @Override public String send(String to, String msg) {
+        return "Push sent to " + to;
+    }
+}
+
+// 4. Strategy Pattern — using lambdas (no class hierarchy needed)
+@FunctionalInterface
+interface PricingStrategy {
+    double calculate(double basePrice, int quantity);
+}
+
+class OrderCalculator {
+    static final PricingStrategy REGULAR =
+        (price, qty) -> price * qty;
+    static final PricingStrategy BULK_DISCOUNT =
+        (price, qty) -> price * qty * (qty > 100 ? 0.8 : qty > 50 ? 0.9 : 1.0);
+    static final PricingStrategy MEMBER =
+        (price, qty) -> price * qty * 0.85;
+
+    public double calculate(double price, int qty, PricingStrategy strategy) {
+        return strategy.calculate(price, qty);
+    }
+}
+// calc.calculate(10.0, 200, OrderCalculator.BULK_DISCOUNT) → 1600.0
+
+// 5. Observer (Event System)
+class EventBus {
+    private final Map<String, List<Consumer<Object>>> listeners = new HashMap<>();
+
+    public void subscribe(String event, Consumer<Object> listener) {
+        listeners.computeIfAbsent(event, k -> new ArrayList<>()).add(listener);
+    }
+
+    public void publish(String event, Object data) {
+        listeners.getOrDefault(event, List.of())
+            .forEach(l -> l.accept(data));
+    }
+}
+// var bus = new EventBus();
+// bus.subscribe("user.created", data -> sendWelcomeEmail(data));
+// bus.subscribe("user.created", data -> logAuditTrail(data));
+// bus.publish("user.created", newUser);
+
+// 6. Decorator Pattern — wrapping behavior
+interface Logger {
+    void log(String message);
+}
+
+class ConsoleLogger implements Logger {
+    @Override public void log(String msg) { System.out.println(msg); }
+}
+
+class TimestampLogger implements Logger {
+    private final Logger delegate;
+    TimestampLogger(Logger delegate) { this.delegate = delegate; }
+    @Override public void log(String msg) {
+        delegate.log("[" + java.time.Instant.now() + "] " + msg);
+    }
+}
+
+class JsonLogger implements Logger {
+    private final Logger delegate;
+    JsonLogger(Logger delegate) { this.delegate = delegate; }
+    @Override public void log(String msg) {
+        delegate.log("{\\"message\\": \\"" + msg + "\\"}");
+    }
+}
+// var logger = new TimestampLogger(new JsonLogger(new ConsoleLogger()));
+// logger.log("Hello") → [2024-12-15T10:00:00Z] {"message": "Hello"}`,
+    practice: "Build a NotificationService using Factory + Strategy + Builder patterns: Create a NotificationBuilder that builds notifications (email, SMS, push) with optional fields (subject, priority, attachments). Add a DeliveryStrategy interface with implementations for immediate delivery, batched delivery (every N messages), and scheduled delivery. Use a factory to create the right strategy from configuration.",
+    solution: `import java.util.*;
+import java.time.*;
+import java.util.function.*;
+
+record Notification(
+    String channel, String recipient, String message,
+    String subject, int priority
+) {
+    static Builder builder(String channel, String recipient) {
+        return new Builder(channel, recipient);
+    }
+
+    static class Builder {
+        private final String channel, recipient;
+        private String message = "", subject = "";
+        private int priority = 3;
+
+        Builder(String ch, String to) { channel = ch; recipient = to; }
+        Builder message(String m)  { message = m; return this; }
+        Builder subject(String s)  { subject = s; return this; }
+        Builder priority(int p)    { priority = p; return this; }
+
+        Notification build() {
+            if (recipient.isBlank()) throw new IllegalStateException("Recipient required");
+            return new Notification(channel, recipient, message, subject, priority);
+        }
+    }
+}
+
+interface DeliveryStrategy {
+    void deliver(Notification n);
+
+    static DeliveryStrategy immediate() {
+        return n -> System.out.println("Sending NOW: " + n);
+    }
+
+    static DeliveryStrategy batched(int batchSize) {
+        var buffer = new ArrayList<Notification>();
+        return n -> {
+            buffer.add(n);
+            if (buffer.size() >= batchSize) {
+                System.out.println("Flushing batch of " + buffer.size());
+                buffer.clear();
+            }
+        };
+    }
+
+    static DeliveryStrategy of(String type) {
+        return switch (type) {
+            case "immediate" -> immediate();
+            case "batched"   -> batched(10);
+            default -> throw new IllegalArgumentException("Unknown: " + type);
+        };
+    }
+}`,
+  },
+  {
+    time: "Hour 14",
+    title: "Memory Management, Garbage Collection & JVM Internals Deep Dive",
+    concept: [
+      "**JVM memory areas:** (1) **Heap** — all objects live here, managed by GC. Divided into **Young Generation** (Eden + Survivor spaces) and **Old Generation** (tenured). (2) **Stack** — one per thread, stores method frames, local variables, and partial results. Each method call creates a frame; return pops it. (3) **Metaspace** — stores class metadata (replaced PermGen in Java 8). (4) **Code Cache** — JIT-compiled native code.",
+      "**Object lifecycle:** `new Object()` allocates in Eden (Young Gen). Minor GC collects Eden — survivors move to Survivor space. After several minor GCs, long-lived objects promote to Old Gen. Major GC (Full GC) collects Old Gen — this is expensive and causes 'stop-the-world' pauses. Objects without references are eligible for GC — Java uses reachability analysis (GC roots: local vars, static fields, threads).",
+      "**Garbage collectors:** (1) **G1GC** (default Java 9-20) — divides heap into regions, prioritizes garbage-first. Good balance of throughput and latency. (2) **ZGC** (default Java 21+) — ultra-low latency (<1ms pauses), handles multi-TB heaps. (3) **Shenandoah** — similar to ZGC, Red Hat. (4) **Serial/Parallel** — for small heaps or batch jobs. Choose `-XX:+UseZGC` for microservices, `-XX:+UseG1GC` for general.",
+      "**Memory leaks in Java** happen when objects remain referenced but unused. Common causes: (1) Static collections that grow forever. (2) Unclosed resources (streams, connections). (3) Inner class instances holding outer class references. (4) ThreadLocal not removed in thread pools. (5) Listeners/callbacks never unregistered. (6) String.intern() abuse. Use profilers (VisualVM, JFR) and heap dumps to find leaks.",
+      "**JVM tuning flags:** `-Xms512m` (initial heap), `-Xmx2g` (max heap), `-XX:+UseZGC` (GC algorithm), `-XX:MaxGCPauseMillis=200` (G1 target), `-XX:+HeapDumpOnOutOfMemoryError` (critical for prod), `-XX:+PrintGCDetails` (GC logging), `-XX:MetaspaceSize=256m`. For containers: `-XX:+UseContainerSupport` (default on), `-XX:MaxRAMPercentage=75.0` (use 75% of container memory).",
+      "**Strong, Soft, Weak, Phantom references:** (1) **Strong** — normal references, prevents GC. (2) **SoftReference** — cleared before OOM, ideal for caches. (3) **WeakReference** — cleared at next GC, used in WeakHashMap. (4) **PhantomReference** — cleared after finalization, for cleanup tracking. Use `SoftReference<byte[]>` for image caches that automatically shrink under memory pressure.",
+    ],
+    code: `// === JVM Memory & GC Deep Dive ===
+
+// 1. Stack vs Heap — what goes where?
+public class MemoryDemo {
+    static int classVar = 10;    // Metaspace (class data)
+
+    public void method() {
+        int x = 42;              // Stack (primitive local var)
+        String name = "Alice";   // Stack (reference) → Heap (String object)
+        var list = new ArrayList<>(); // Stack (ref) → Heap (ArrayList object)
+        // When method() returns, x and references are popped from stack
+        // The objects on heap become eligible for GC if no other refs exist
+    }
+}
+
+// 2. Object lifecycle visualization
+// new User("Alice")
+//    → Allocates in Eden (Young Gen)
+//    → Survives minor GC → moves to Survivor (S0/S1)
+//    → Survives ~15 minor GCs → promoted to Old Gen
+//    → When unreachable → collected by Major GC
+
+// 3. Memory leak example — static collection
+class LeakyCache {
+    // BAD: grows forever, never releases entries
+    private static final Map<String, byte[]> cache = new HashMap<>();
+
+    public static void store(String key, byte[] data) {
+        cache.put(key, data); // entries never removed!
+    }
+}
+
+// FIXED: use bounded cache
+class BoundedCache {
+    private static final int MAX = 1000;
+    private static final Map<String, byte[]> cache = new LinkedHashMap<>(MAX, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, byte[]> e) {
+            return size() > MAX;
+        }
+    };
+}
+
+// 4. SoftReference for memory-sensitive caches
+import java.lang.ref.SoftReference;
+
+class ImageCache {
+    private final Map<String, SoftReference<byte[]>> cache = new HashMap<>();
+
+    public void put(String key, byte[] image) {
+        cache.put(key, new SoftReference<>(image));
+    }
+
+    public Optional<byte[]> get(String key) {
+        var ref = cache.get(key);
+        if (ref == null) return Optional.empty();
+        byte[] data = ref.get(); // may be null if GC cleared it
+        if (data == null) {
+            cache.remove(key);   // clean up stale entry
+            return Optional.empty();
+        }
+        return Optional.of(data);
+    }
+}
+
+// 5. try-with-resources prevents resource leaks
+// BAD: resource leak if exception occurs
+// InputStream in = new FileInputStream("data.txt");
+// byte[] data = in.readAllBytes();
+// in.close(); // never reached if readAllBytes() throws!
+
+// GOOD: guaranteed cleanup
+try (var in = new FileInputStream("data.txt")) {
+    byte[] data = in.readAllBytes();
+} // in.close() called automatically
+
+// 6. ThreadLocal leak prevention
+class RequestContext {
+    private static final ThreadLocal<Map<String, Object>> context =
+        ThreadLocal.withInitial(HashMap::new);
+
+    public static void set(String key, Object value) {
+        context.get().put(key, value);
+    }
+
+    public static <T> T get(String key) {
+        return (T) context.get().get(key);
+    }
+
+    // MUST call in finally block / servlet filter / Spring interceptor
+    public static void clear() {
+        context.remove(); // prevents leak when thread returns to pool
+    }
+}
+
+// 7. JVM startup flags for production
+// java -Xms1g -Xmx4g \\
+//      -XX:+UseZGC \\
+//      -XX:+HeapDumpOnOutOfMemoryError \\
+//      -XX:HeapDumpPath=/var/dumps/ \\
+//      -XX:+UseStringDeduplication \\
+//      -XX:MaxRAMPercentage=75.0 \\
+//      -jar myapp.jar
+
+// For containers (Docker/K8s):
+// java -XX:+UseContainerSupport \\
+//      -XX:MaxRAMPercentage=75.0 \\
+//      -XX:+UseZGC \\
+//      -jar myapp.jar`,
+    practice: "Implement a MemoryAwareCache<K,V> that: (1) Uses SoftReferences so the JVM can clear entries under memory pressure. (2) Has a configurable max size with LRU eviction. (3) Tracks cache hit/miss statistics with AtomicLong. (4) Has a cleanup() method that removes entries whose SoftReferences have been cleared.",
+    solution: `import java.lang.ref.SoftReference;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
+
+class MemoryAwareCache<K, V> {
+    private final Map<K, SoftReference<V>> cache;
+    private final int maxSize;
+    private final AtomicLong hits = new AtomicLong();
+    private final AtomicLong misses = new AtomicLong();
+
+    public MemoryAwareCache(int maxSize) {
+        this.maxSize = maxSize;
+        this.cache = new LinkedHashMap<>(maxSize, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<K, SoftReference<V>> e) {
+                return size() > maxSize;
+            }
+        };
+    }
+
+    public synchronized void put(K key, V value) {
+        cache.put(key, new SoftReference<>(value));
+    }
+
+    public synchronized Optional<V> get(K key) {
+        var ref = cache.get(key);
+        if (ref == null) { misses.incrementAndGet(); return Optional.empty(); }
+        V value = ref.get();
+        if (value == null) {
+            cache.remove(key);
+            misses.incrementAndGet();
+            return Optional.empty();
+        }
+        hits.incrementAndGet();
+        return Optional.of(value);
+    }
+
+    public synchronized void cleanup() {
+        cache.entrySet().removeIf(e -> e.getValue().get() == null);
+    }
+
+    public String stats() {
+        long h = hits.get(), m = misses.get();
+        double ratio = (h + m) > 0 ? (double) h / (h + m) * 100 : 0;
+        return "Hits: %d, Misses: %d, Ratio: %.1f%%, Size: %d"
+            .formatted(h, m, ratio, cache.size());
+    }
+}`,
+  },
+  {
+    time: "Hour 15",
+    title: "Comparable, Iterable, Reflection, String Internals & Interview Essentials",
+    concept: [
+      "**Comparable<T> vs Comparator<T>:** `Comparable` defines the **natural ordering** of a class — implement `compareTo()` inside the class itself: `record User(String name) implements Comparable<User> { public int compareTo(User o) { return name.compareTo(o.name); } }`. `Comparator` is an **external** ordering strategy — pass it to sort methods: `users.sort(Comparator.comparing(User::name).reversed())`. Use Comparable for one default order; Comparator for multiple custom orders.",
+      "**Iterable<T> and Iterator<T>:** Any class implementing `Iterable<T>` can be used in for-each loops: `for (var item : myCollection)`. You must implement `iterator()` returning an `Iterator<T>` with `hasNext()` and `next()`. Custom iterables let you define how your data structure is traversed. `Spliterator` (Java 8+) adds parallel traversal support for Streams.",
+      "**String internals:** Strings are backed by a `byte[]` (Java 9+ Compact Strings — Latin-1 for ASCII, UTF-16 otherwise). The **String pool** stores interned strings — `\"hello\"` literals are pooled, `new String(\"hello\")` is not. `String.intern()` forces pool lookup. String concatenation with `+` in loops creates many throwaway objects — use StringBuilder. `String.formatted()` (Java 15+) replaces `String.format()`.",
+      "**Immutability deep dive:** Immutable objects cannot change state after creation. Benefits: thread-safe, safe as HashMap keys, cacheable, simpler to reason about. To make a class immutable: (1) Declare `final class`. (2) All fields `private final`. (3) No setters. (4) Deep-copy mutable fields in constructor AND getters. (5) Records are immutable by default. Java's String, wrapper types, and java.time classes are all immutable.",
+      "**Reflection** (`java.lang.reflect`) lets you inspect and modify classes at runtime: `Class<?> cls = Class.forName(\"com.example.User\");`, `cls.getDeclaredFields()`, `cls.getDeclaredMethods()`. Invoke methods: `method.invoke(obj, args)`. Access private fields: `field.setAccessible(true)`. Reflection powers every major framework: Spring (DI), Hibernate (ORM), Jackson (JSON), JUnit (test discovery). Performance cost: 5-50x slower than direct calls.",
+      "**Key interview concepts:** (1) `==` vs `equals()` — reference vs content. (2) String pool and immutability. (3) HashMap O(1) average → O(log n) worst case (tree bins). (4) `final` vs `finally` vs `finalize()` (deprecated). (5) Checked vs unchecked exceptions. (6) Fail-fast iterators (ConcurrentModificationException). (7) `transient` keyword — excludes field from serialization. (8) Diamond problem — solved by interfaces with default methods (compilation error if ambiguous).",
+    ],
+    code: `// === Comparable, Iterable, Reflection & String Internals ===
+
+// 1. Comparable — natural ordering (inside the class)
+public record Product(String name, double price)
+    implements Comparable<Product> {
+
+    @Override
+    public int compareTo(Product other) {
+        return Double.compare(this.price, other.price); // by price ascending
+    }
+}
+// Collections.sort(products); // uses natural ordering (by price)
+
+// 2. Comparator — external ordering (multiple strategies)
+var byName = Comparator.comparing(Product::name);
+var byPriceDesc = Comparator.comparingDouble(Product::price).reversed();
+var byNameThenPrice = Comparator.comparing(Product::name)
+    .thenComparingDouble(Product::price);
+
+// Null-safe comparator
+var nullSafe = Comparator.nullsLast(
+    Comparator.comparing(Product::name)
+);
+
+List<Product> products = new ArrayList<>(List.of(
+    new Product("Mouse", 29.99),
+    new Product("Laptop", 999.99),
+    new Product("Keyboard", 79.99)
+));
+products.sort(byPriceDesc); // [Laptop, Keyboard, Mouse]
+
+// 3. Custom Iterable — make your class work in for-each
+class NumberRange implements Iterable<Integer> {
+    private final int start, end;
+
+    NumberRange(int start, int end) { this.start = start; this.end = end; }
+
+    @Override
+    public Iterator<Integer> iterator() {
+        return new Iterator<>() {
+            private int current = start;
+
+            @Override public boolean hasNext() { return current <= end; }
+            @Override public Integer next() {
+                if (!hasNext()) throw new java.util.NoSuchElementException();
+                return current++;
+            }
+        };
+    }
+}
+// for (int n : new NumberRange(1, 5)) { System.out.println(n); }
+// Prints: 1, 2, 3, 4, 5
+
+// 4. String Internals
+String a = "hello";           // from String pool
+String b = "hello";           // same pool reference
+String c = new String("hello"); // new heap object
+String d = c.intern();        // moves to pool → same as a
+
+System.out.println(a == b);   // true  (same pool ref)
+System.out.println(a == c);   // false (different objects)
+System.out.println(a == d);   // true  (intern returns pool ref)
+System.out.println(a.equals(c)); // true (content match)
+
+// String performance: StringBuilder vs concatenation
+// BAD — creates new String objects each iteration
+String bad = "";
+for (int i = 0; i < 10000; i++) bad += i; // O(n^2)
+
+// GOOD — O(n)
+var good = new StringBuilder();
+for (int i = 0; i < 10000; i++) good.append(i);
+String result = good.toString();
+
+// Modern string formatting (Java 15+)
+String formatted = "Hello %s, you have %d items".formatted("Alice", 5);
+
+// 5. Immutable class — thread-safe, safe as Map key
+public final class Address {
+    private final String street;
+    private final String city;
+    private final List<String> tags; // mutable type!
+
+    public Address(String street, String city, List<String> tags) {
+        this.street = street;
+        this.city = city;
+        this.tags = List.copyOf(tags); // DEFENSIVE COPY — crucial!
+    }
+
+    public String street() { return street; }
+    public String city()   { return city; }
+    public List<String> tags() { return tags; } // already immutable
+}
+
+// 6. Reflection — inspect and invoke at runtime
+Class<?> cls = String.class;
+System.out.println("Methods: " + cls.getDeclaredMethods().length);
+
+// Invoke a private method
+var method = cls.getDeclaredMethod("value"); // private byte[] value
+method.setAccessible(true);
+byte[] internal = (byte[]) method.invoke("hello");
+
+// Create instance dynamically
+Class<?> userClass = Class.forName("com.example.User");
+Constructor<?> ctor = userClass.getDeclaredConstructor(String.class, int.class);
+Object user = ctor.newInstance("Alice", 30);
+
+// Read annotations (how frameworks work)
+for (var m : userClass.getDeclaredMethods()) {
+    if (m.isAnnotationPresent(Deprecated.class)) {
+        System.out.println("Deprecated: " + m.getName());
+    }
+}
+
+// 7. Fail-fast iterator
+var list = new ArrayList<>(List.of("a", "b", "c"));
+// BAD: ConcurrentModificationException
+// for (String s : list) { if (s.equals("b")) list.remove(s); }
+
+// GOOD: use Iterator.remove()
+var it = list.iterator();
+while (it.hasNext()) {
+    if (it.next().equals("b")) it.remove();
+}
+
+// GOOD: use removeIf (Java 8+)
+list.removeIf(s -> s.equals("b"));`,
+    practice: "Build a SortedCollection<T extends Comparable<T>> that: (1) Implements Iterable<T> so you can use for-each. (2) Maintains elements in sorted order on insertion. (3) Supports custom Comparator via an overloaded constructor. (4) Has methods: add(T), remove(T), contains(T), size(), and toList(). Use binary search for efficient insertion.",
+    solution: `import java.util.*;
+
+public class SortedCollection<T extends Comparable<T>> implements Iterable<T> {
+    private final List<T> elements = new ArrayList<>();
+    private final Comparator<T> comparator;
+
+    public SortedCollection() {
+        this.comparator = Comparator.naturalOrder();
+    }
+
+    public SortedCollection(Comparator<T> comparator) {
+        this.comparator = Objects.requireNonNull(comparator);
+    }
+
+    public void add(T element) {
+        int idx = Collections.binarySearch(elements, element, comparator);
+        if (idx < 0) idx = -(idx + 1); // insertion point
+        elements.add(idx, element);
+    }
+
+    public boolean remove(T element) {
+        int idx = Collections.binarySearch(elements, element, comparator);
+        if (idx >= 0) { elements.remove(idx); return true; }
+        return false;
+    }
+
+    public boolean contains(T element) {
+        return Collections.binarySearch(elements, element, comparator) >= 0;
+    }
+
+    public int size() { return elements.size(); }
+
+    public List<T> toList() { return List.copyOf(elements); }
+
+    @Override
+    public Iterator<T> iterator() {
+        return Collections.unmodifiableList(elements).iterator();
+    }
+
+    @Override
+    public String toString() { return elements.toString(); }
+}
+
+// Usage:
+// var sc = new SortedCollection<Integer>();
+// sc.add(5); sc.add(1); sc.add(3);
+// for (int n : sc) System.out.println(n); // 1, 3, 5
+//
+// var byLen = new SortedCollection<String>(
+//     Comparator.comparingInt(String::length));
+// byLen.add("cat"); byLen.add("elephant"); byLen.add("hi");
+// byLen.toList() → [hi, cat, elephant]`,
+  },
 ];

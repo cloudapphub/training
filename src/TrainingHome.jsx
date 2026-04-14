@@ -177,9 +177,9 @@ const courses = [
     title: "Core Java",
     subtitle: "Production-Grade Mastery",
     description:
-      "Ten hours mastering Java 21+ — JVM internals, OOP, records, sealed classes, generics, collections, Streams API, functional programming, CompletableFuture, virtual threads, java.time, NIO, Optional, and modern best practices.",
-    duration: "10 hours",
-    lessons: 10,
+      "Fifteen hours mastering Java 21+ — JVM internals, OOP, records, sealed classes, generics, HashMap internals, equals/hashCode, collections, Streams, functional programming, Runnable/Callable, locks/synchronizers, CompletableFuture, virtual threads, design patterns, memory/GC tuning, reflection, and interview essentials.",
+    duration: "15 hours",
+    lessons: 15,
     icon: FileCode,
     gradient: "from-amber-500 via-orange-500 to-red-500",
     glowColor: "rgba(245,158,11,0.15)",
