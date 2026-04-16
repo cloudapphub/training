@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag, Layers, Key } from "lucide-react";
+import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag, Layers, Key, DatabaseZap } from "lucide-react";
 
 const courses = [
   {
@@ -226,6 +226,34 @@ const courses = [
     gradient: "from-green-500 via-emerald-500 to-teal-500",
     glowColor: "rgba(16,185,129,0.15)",
     tags: ["Spring Boot 3", "JPA", "PostgreSQL", "Keycloak", "Testcontainers", "Docker"],
+  },
+  {
+    id: "db-tuning",
+    path: "/db-tuning",
+    title: "DB Tuning & Troubleshooting",
+    subtitle: "Spring Boot + PostgreSQL",
+    description:
+      "Twelve sessions mastering database performance — HikariCP connection pooling, EXPLAIN ANALYZE, indexing strategies (B-Tree, GIN, Partial, Covering), N+1 detection, transaction isolation, VACUUM, AWS RDS/Aurora tuning, monitoring with Prometheus/Grafana, Flyway migrations, and a production troubleshooting runbook.",
+    duration: "12 sessions",
+    lessons: 12,
+    icon: DatabaseZap,
+    gradient: "from-violet-500 via-purple-500 to-indigo-500",
+    glowColor: "rgba(139,92,246,0.15)",
+    tags: ["HikariCP", "PostgreSQL", "RDS/Aurora", "N+1", "VACUUM", "Troubleshooting"],
+  },
+  {
+    id: "fastapi",
+    path: "/fastapi",
+    title: "Enterprise FastAPI",
+    subtitle: "High-Performance Python APIs",
+    description:
+      "Ten hours mastering FastAPI — Pydantic, Dependency Injection, Uvicorn workers, async/await, Database Pooling, WebSockets, SSE streaming, and React integration for real-time dashboards.",
+    duration: "10 hours",
+    lessons: 10,
+    icon: DatabaseZap,
+    gradient: "from-emerald-500 via-teal-500 to-cyan-500",
+    glowColor: "rgba(20,184,166,0.15)",
+    tags: ["FastAPI", "Async", "WebSockets", "SSE", "Pydantic", "React"],
   },
 ];
 

@@ -16,6 +16,8 @@ import JavaTraining from './JavaTraining'
 import AngularTraining from './AngularTraining'
 import KeycloakTraining from './KeycloakTraining'
 import SpringBootTraining from './SpringBootTraining'
+import DbTuningTraining from './DbTuningTraining'
+import FastApiTraining from './FastApiTraining'
 
 export default function App() {
   return (
@@ -37,6 +39,8 @@ export default function App() {
       <Route path="/angular" element={<AngularTraining />} />
       <Route path="/keycloak" element={<KeycloakTraining />} />
       <Route path="/spring-boot" element={<SpringBootTraining />} />
+      <Route path="/db-tuning" element={<DbTuningTraining />} />
+      <Route path="/fastapi" element={<FastApiTraining />} />
     </Routes>
   )
 }

@@ -1679,4 +1679,250 @@ export const aiService = {
   chat: (msg) => fastApi.post("/chat", { message: msg }),
 };`,
   },
+  {
+    time: "Hour 7",
+    title: "Client-Side Performance at Scale: Virtualization & Lazy Loading",
+    concept: [
+      "**React.memo & useMemo:** Prevent unnecessary re-renders. `React.memo` wraps a component to render only if its props change. `useMemo` caches the result of expensive calculations. `useCallback` caches a function definition. These are vital for heavy client-side apps, but don't overuse them—React is fast by default. Use them when profiling shows a bottleneck.",
+      "**List Virtualization:** When rendering 10,000+ items, the DOM becomes the bottleneck. Virtualization libraries like `react-window` or `react-virtuoso` fix this by only rendering the 10-20 items currently visible on the screen, recycling DOM nodes as you scroll. This turns a 100MB DOM into a 1MB DOM and keeps 60FPS.",
+      "**Lazy Loading & Code Splitting:** Don't send your entire JavaScript bundle to the user at once. Use `const Chart = lazy(() => import('./Chart'))` to load components only when they are rendered. Wrap them in `<Suspense fallback={<Spinner />}>`. Split routes, large libraries, and dialogs into separate chunks.",
+      "**Web Workers:** React runs on the main thread. If you run a loop 10,000,000 times, the browser freezes. Web Workers run scripts in background threads. Use libraries like `comlink` to easily offload heavy data processing, parsing, or sorting to a Web Worker, freeing up the UI thread.",
+      "**Debouncing & Throttling:** Rapid state updates (typing in search, scrolling, resizing) cause frame drops. `useDebounce` waits until the user stops typing for X ms. `useThrottle` limits executions to once every X ms. Use them for API calls and heavy UI updates.",
+      "**Intersection Observer:** Don't load images outside the viewport. Use Intersection Observer to detect when an element enters the screen and only then fetch its image or trigger heavy animations. This drastically improves Initial Load times."
+    ],
+    code: `import React, { useState, useMemo, useCallback, lazy, Suspense } from "react";
+import { FixedSizeList as List } from "react-window";
+
+// === 1. Memoization Example ===
+const ExpensiveRow = React.memo(({ item, onSelect }) => {
+  console.log("Rendered", item.id);
+  return <div onClick={() => onSelect(item.id)}>{item.name}</div>;
+});
+
+function MemoDemo() {
+  const [count, setCount] = useState(0);
+  const [items] = useState([{ id: 1, name: "A" }, { id: 2, name: "B" }]);
+
+  // useCallback keeps the reference stable across renders
+  const handleSelect = useCallback((id) => {
+    console.log("Selected", id);
+  }, []); 
+
+  return (
+    <div>
+      <button onClick={() => setCount(c => c + 1)}>Count: {count}</button>
+      {items.map(item => (
+        <ExpensiveRow key={item.id} item={item} onSelect={handleSelect} />
+      ))}
+    </div>
+  );
+}
+
+// === 2. List Virtualization (react-window) ===
+function VirtualizedList({ heavyItems }) {
+  // Render function for visible rows only
+  const renderRow = ({ index, style }) => (
+    <div style={style}>Row {heavyItems[index].name}</div>
+  );
+
+  return (
+    <List
+      height={400}         // Container height
+      itemCount={100000}   // Total items
+      itemSize={35}        // Row height
+      width={300}          // Container width
+    >
+      {renderRow}
+    </List>
+  );
+}
+
+// === 3. Code Splitting / Lazy Loading ===
+// Only loaded when HeavyDashboard is rendered
+const HeavyDashboard = lazy(() => import("./HeavyDashboard"));
+
+function App() {
+  const [showDashboard, setShowDashboard] = useState(false);
+
+  return (
+    <div>
+      <button onClick={() => setShowDashboard(true)}>Load Dashboard</button>
+      {showDashboard && (
+        <Suspense fallback={<div>Loading Dashboard Chunk...</div>}>
+          <HeavyDashboard />
+        </Suspense>
+      )}
+    </div>
+  );
+}`,
+    practice: "Build a virtualized contact list holding 50,000 items using react-window. Implement a debounced search input to filter the list. Ensure the Individual row components are wrapped in React.memo and the select function uses useCallback.",
+    solution: `import React, { useState, useMemo, useCallback, useEffect } from "react";
+import { FixedSizeList as List } from "react-window";
+
+const allContacts = Array.from({ length: 50000 }, (_, i) => ({ id: i, name: \`Contact \${i}\` }));
+
+const useDebounce = (val, ms) => {
+  const [debounced, setDebounced] = useState(val);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(val), ms);
+    return () => clearTimeout(timer);
+  }, [val, ms]);
+  return debounced;
+};
+
+const ContactRow = React.memo(({ data, index, style }) => {
+  const { filtered, onSelect } = data;
+  const contact = filtered[index];
+  return (
+    <div style={{ ...style, borderBottom: "1px solid #eee", padding: 8 }}
+         onClick={() => onSelect(contact.id)}>
+      {contact.name}
+    </div>
+  );
+});
+
+export default function App() {
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search, 300);
+
+  const filtered = useMemo(() => 
+    allContacts.filter(c => c.name.toLowerCase().includes(debouncedSearch.toLowerCase())),
+  [debouncedSearch]);
+
+  const handleSelect = useCallback((id) => console.log("Selected", id), []);
+
+  const itemData = useMemo(() => ({
+    filtered, onSelect: handleSelect
+  }), [filtered, handleSelect]);
+
+  return (
+    <div>
+      <input type="text" placeholder="Search 50k contacts..."
+             value={search} onChange={e => setSearch(e.target.value)}
+             style={{ padding: 10, width: "100%", marginBottom: 10 }} />
+      <List height={500} itemCount={filtered.length} itemSize={40} width="100%" itemData={itemData}>
+        {ContactRow}
+      </List>
+    </div>
+  );
+}`
+  },
+  {
+    time: "Hour 8",
+    title: "Enterprise Scale Architecture: SSR, Caching & Atomic State",
+    concept: [
+      "**Next.js & Server-Side Rendering (SSR):** With 100k+ users, offloading initial renders to the server speeds up LCP (Largest Contentful Paint) and drastically improves SEO. Next.js App Router uses React Server Components (RSC) to render UI on the server with zero client-side JavaScript, shipping only HTML.",
+      "**Client-Side Caching (TanStack Query):** Stop refetching data everywhere. Tools like TanStack (React) Query cache API responses. They handle 'stale-while-revalidate', background updates, automatic retries, and deduplication. If 5 components request the same user object, only 1 network request is made.",
+      "**Atomic State vs. Context:** React Context triggers updates on EVERY consumer when the value changes. For massive apps with lots of frequent state updates, avoid Context. Use atomic state managers like **Zustand** or **Jotai**. They allow subscribing to specific slices of state, preventing cascading UI re-renders.",
+      "**Edge Caching & CDNs:** Serve static assets (JS chunks, images, CSS) from a CDN (CloudFront/Cloudflare) using Brotli compression. Implement aggressive Cache-Control headers (`public, max-age=31536000, immutable`) for hashed Vite/Webpack assets.",
+      "**Image Optimization:** Never render a 4MB 4K PNG. Use Next/Image or Vite plugins to create `webp` / `avif` formats dynamically with `srcset` for responsive design. Use a blur-hash placeholder to prevent Cumulative Layout Shift (CLS).",
+      "**Micro-Frontends & Architecture:** At massive engineering scale, entire React apps are split into independent Micro-Frontends (e.g. via Webpack Module Federation) allowing teams to deploy sections of the app independently. It scales organizationally as well as technically."
+    ],
+    code: `// === 1. Server Components & SSR (Next.js App Router) ===
+import { Suspense } from "react";
+
+// Server-side fetch (using standard fetch API patched by Next)
+async function getUsers() {
+  const res = await fetch("https://api.example.com/users", {
+    next: { revalidate: 60 } // Incrementally Static Revalidate (ISR) every 60s
+  });
+  return res.json();
+}
+
+export default async function UsersPage() {
+  const users = await getUsers(); // Blocks rendering until data is here
+  
+  return (
+    <main>
+      <h1>100k User Directory (SSR)</h1>
+      <Suspense fallback={<p>Loading user list...</p>}>
+        <ul>{users.map(u => <li key={u.id}>{u.name}</li>)}</ul>
+      </Suspense>
+    </main>
+  );
+}
+
+// === 2. TanStack Query for Heavy Client Data ===
+import { useQuery } from "@tanstack/react-query";
+
+function UserProfile({ id }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['user', id],
+    queryFn: () => fetch(\`/api/users/\${id}\`).then(r => r.json()),
+    staleTime: 1000 * 60 * 10,  // Cache remains fresh for 10 minutes
+    gcTime: 1000 * 60 * 60      // Keep in memory for 1 hour
+  });
+
+  if (isLoading) return <p>Loading...</p>;
+  return <div>{data.name}</div>;
+}
+
+// === 3. Atomic State with Zustand ===
+import { create } from 'zustand';
+
+// Store is outside React
+const useStore = create((set) => ({
+  count: 0,
+  inc: () => set((state) => ({ count: state.count + 1 })),
+}));
+
+function Counter() {
+  // Subscribes only to "count"
+  const count = useStore((state) => state.count);
+  return <h1>{count}</h1>;
+}
+
+function Controls() {
+  // Does not re-render when count changes!
+  const inc = useStore((state) => state.inc);
+  return <button onClick={inc}>Increment</button>;
+}`,
+    practice: "Set up a Zustand store for an eCommerce cart. Include arrays and total. Create two components: CartIcon (subscribes only to `items.length`) and Checkout (subscribes to everything). Observe how CartIcon avoids re-renders on price changes.",
+    solution: `import React from 'react';
+import { create } from 'zustand';
+
+const useCartStore = create((set, get) => ({
+  items: [],
+  addItem: (product) => set((state) => ({ items: [...state.items, product] })),
+  removeItem: (id) => set((state) => ({ items: state.items.filter(i => i.id !== id) })),
+  getTotal: () => get().items.reduce((sum, item) => sum + item.price, 0),
+}));
+
+// Subscribes ONLY to length
+function CartNavIcon() {
+  const itemCount = useCartStore((state) => state.items.length);
+  return <div>🛒 {itemCount} items</div>;
+}
+
+function CheckoutPage() {
+  const items = useCartStore((state) => state.items);
+  const getTotal = useCartStore((state) => state.getTotal);
+  const removeItem = useCartStore((state) => state.removeItem);
+
+  return (
+    <div>
+      <h2>Checkout</h2>
+      {items.map(item => (
+        <div key={item.id}>
+          {item.name} - $\{item.price} <button onClick={() => removeItem(item.id)}>X</button>
+        </div>
+      ))}
+      <h3>Total: $\{getTotal().toFixed(2)}</h3>
+    </div>
+  );
+}
+
+export default function App() {
+  const addItem = useCartStore((state) => state.addItem);
+  return (
+    <div>
+      <CartNavIcon />
+      <button onClick={() => addItem({ id: Date.now(), name: "Robot", price: 99.99 })}>
+        Add Robot
+      </button>
+      <CheckoutPage />
+    </div>
+  );
+}`
+  }
 ];
