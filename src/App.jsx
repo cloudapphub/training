@@ -18,6 +18,7 @@ import KeycloakTraining from './KeycloakTraining'
 import SpringBootTraining from './SpringBootTraining'
 import DbTuningTraining from './DbTuningTraining'
 import FastApiTraining from './FastApiTraining'
+import DevOpsTraining from './DevOpsTraining'
 
 export default function App() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
       <Route path="/spring-boot" element={<SpringBootTraining />} />
       <Route path="/db-tuning" element={<DbTuningTraining />} />
       <Route path="/fastapi" element={<FastApiTraining />} />
+      <Route path="/devops" element={<DevOpsTraining />} />
     </Routes>
   )
 }

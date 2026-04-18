@@ -44,7 +44,7 @@ export default function EksManagedNodes() {
             <h1 className="text-2xl sm:text-3xl font-bold">AWS EKS Managed Node Groups — Deep Dive</h1>
           </div>
           <p className="text-slate-400 text-sm">
-            10 focused hours. Master EKS managed nodes — from architecture and networking to scaling, security, cost optimization, and production best practices.
+            13 focused hours. Master EKS managed nodes — from architecture and networking to scaling, security, cost optimization, technical troubleshooting deep dives, and production best practices.
           </p>
           <div className="mt-4 h-2 bg-slate-800 rounded-full overflow-hidden">
             <div className="h-full bg-gradient-to-r from-yellow-400 to-orange-500 transition-all duration-300" style={{ width: `${progress}%` }} />

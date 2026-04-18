@@ -696,6 +696,383 @@ kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
 kubectl uncordon <node-name>`,
   },
   {
+    time: "Hour 10",
+    title: "EKS Troubleshooting Deepdive: Pod Lifecycle & CrashLoops",
+    concept: [
+      "**The Technical Deepdive Paradigm.** When troubleshooting EKS in a high-stakes environment or a technical interview (like Oteemo, where consultants must demonstrate the 'why' behind failures), you cannot just say 'I use kubectl logs'. You must systematically understand the Kubernetes reconciliation loop. Pod failure points occur during Scheduling, Container Creation, Execution, or Liveness probe checks.",
+      "**Debugging CrashLoopBackOff.** A \`CrashLoopBackOff\` means the kubelet started the container, but it exited prematurely. The kubelet then pauses with an exponentially increasing backoff before restarting it. *Your first step* is always checking the Exit Code via \`kubectl describe pod\`. An exit code of \`137\` means \`OOMKilled\` (Out Of Memory - you hit the cgroup memory limit). An exit code of \`143\` means \`SIGTERM\` (graceful stop), usually from scaling down or draining. An exit code of \`1\` means an application-level error (e.g., failed to connect to DB).",
+      "**Previous Logs.** If the container crashes instantly, \`kubectl logs <pod>\` might be empty because it restarted too fast. Always use **\`kubectl logs <pod> --previous\`** to see the logs from the dead container that triggered the crash loop.",
+      "**Liveness vs. Readiness Probe Failures.** A \`CrashLoopBackOff\` isn't always a crash. If your application takes 60 seconds to boot, but your \`livenessProbe\` \`initialDelaySeconds\` is set to 20, the probe fails 3 times, Kubernetes assumes the pod is stuck, issues a \`SIGKILL\` (137), and restarts it. This creates an infinite crash loop without the app actually crashing. Readiness probe failures, on the other hand, just remove the pod from the Service endpoint (no restarts).",
+      "**InitContainer Deadlocks.** A pod will hang in \`Init:CrashLoopBackOff\` if an initContainer fails. Since init containers run sequentially before main containers, a failure here completely halts pod startup. Always debug the init container explicitly: \`kubectl logs <pod> -c <init-container-name>\`."
+    ],
+    code: `# === Systematic CrashLoopBackOff Debugging ===
+
+# STEP 1: Get bird's-eye view of all failing pods
+kubectl get pods -A | grep -E "CrashLoop|Error|OOMKilled|Init:"
+
+# STEP 2: Identify the Exit Code — your primary diagnostic signal
+kubectl describe pod payment-api-7d9c8b-x2v5k -n production
+# KEY OUTPUT:
+#   Last State:     Terminated
+#     Reason:       OOMKilled     <- 137 = cgroup memory limit exceeded
+#     Exit Code:    137
+
+# STEP 3: Pull logs from the DEAD previous container instance
+kubectl logs payment-api-7d9c8b-x2v5k -n production --previous
+# Shows what the crashed container printed BEFORE it died.
+# If empty, the OOM kill was instant — no log was flushed.
+
+# STEP 4: Check for Liveness Probe killing masquerading as a crash
+kubectl get events -n production --sort-by='.lastTimestamp' | tail -30
+# CRITICAL SIGNALS:
+# Warning  Unhealthy  payment-api-xxx  Liveness probe failed: context deadline exceeded
+# Normal   Killing    payment-api-xxx  Container api failed liveness probe, will be restarted
+
+# STEP 5: Debug InitContainers separately
+kubectl get pods -n production
+# NAME                        READY   STATUS                  RESTARTS   AGE
+# payment-api-7d9c8b-x2v5k   0/1     Init:CrashLoopBackOff   7          18m
+kubectl logs payment-api-7d9c8b-x2v5k -n production \
+  -c db-flyway-migrations --previous
+
+# STEP 6: Inspect liveness probe config versus actual app startup time
+kubectl get pod payment-api-7d9c8b-x2v5k -n production -o yaml | \
+  grep -A 20 "livenessProbe"`,
+    practice: "Your production Spring Boot + PostgreSQL Java app enters CrashLoopBackOff under high load. Exit Code is 137 during peak traffic. App runs fine at low traffic. Diagnose and fix completely.",
+    solution: `# ROOT CAUSE: OOMKilled (Exit 137) — JVM heap ignores cgroup limits
+
+# DIAGNOSIS:
+# 1. Confirm Exit Code 137
+kubectl describe pod <pod-name> -n production | grep -A5 "Last State"
+# Reason: OOMKilled, Exit Code: 137
+
+# 2. Check current limits
+kubectl get pod <pod-name> -n production -o yaml | grep -A8 "resources:"
+# limits:
+#   memory: "1Gi"   <- container hard limit = 1GB
+
+# 3. Check actual JVM MaxHeapSize attempted
+kubectl exec -it <pod-name> -- bash -c \
+  "java -XX:+PrintFlagsFinal -version 2>&1 | grep MaxHeapSize"
+# MaxHeapSize = 17179869184  <- JVM allocated 16GB from NODE memory, not container limit!
+
+# FIX 1: Set JVM container-aware flags in Deployment spec:
+env:
+- name: JAVA_TOOL_OPTIONS
+  value: >-
+    -XX:MaxRAMPercentage=75.0
+    -XX:InitialRAMPercentage=50.0
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:HeapDumpPath=/dumps/heapdump.hprof
+    -XX:+ExitOnOutOfMemoryError
+# MaxRAMPercentage=75 -> max heap = 1GB * 0.75 = 768MB
+# Leaves room for JVM metaspace, thread stacks, GC overhead.
+
+# FIX 2: Raise the limit to handle actual burst traffic:
+resources:
+  requests:
+    memory: "1Gi"
+  limits:
+    memory: "2Gi"   # actual kill threshold
+
+# FIX 3: Mount an emptyDir to capture heap dumps for forensics:
+volumes:
+- name: heap-dumps
+  emptyDir: {}
+volumeMounts:
+- name: heap-dumps
+  mountPath: /dumps
+
+# PREVENTION: Install VPA in recommendation mode to track real p99 usage:
+kubectl get vpa payment-api-vpa -o json | jq '.status.recommendation'`
+  },
+  {
+    time: "Hour 11",
+    title: "EKS Troubleshooting Deepdive: Networking & VPC CNI",
+    concept: [
+      "**The VPC CNI Architecture (why it's different from other K8s CNIs).** Unlike Flannel or Calico which create virtual overlay networks, the AWS VPC CNI assigns *real* VPC IP addresses directly to each Pod. When a pod starts, the `aws-node` DaemonSet calls the EC2 API to assign an unused secondary IP from the subnet, or attach a brand new ENI. This is why pods on EKS are directly routable from RDS and on-prem networks — there is no IP translation. But this tight coupling to EC2 ENIs means you are subject to real EC2 infrastructure limits that become painful at scale.",
+      "**ENI / IP limits — the hard ceiling.** Every EC2 instance type has a hard limit on ENIs and secondary IPs per ENI. A `m5.large` supports 3 ENIs × 10 secondary IPs = 30 pod IPs maximum. When you hit this limit, new pods fail with `FailedCreatePodSandBox: failed to allocate IP`. You can view instance limits in the AWS docs or `aws ec2 describe-instance-types --instance-types m5.large --query 'InstanceTypes[0].NetworkInfo'`.",
+      "**Prefix Delegation — the 4x density multiplier.** With `ENABLE_PREFIX_DELEGATION=true`, the VPC CNI assigns /28 CIDR prefixes (16 IPs each) instead of individual IPs. This turns a `m5.large` from 29 pods → 110 pods. A /28 block is consumed atomically from one ENI slot, providing 16 addresses. This can be enabled on live clusters with zero node reboots — only the `aws-node` DaemonSet pods roll restart.",
+      "**SNAT and outbound timeouts explained.** SNAT translates a pod's private IP (10.0.1.5) to the node's primary IP (10.0.1.100) so packets can exit via the NAT Gateway. Under high connection churn — millions of short-lived HTTP connections — the SNAT port table (approximately 64,511 concurrent outbound connections per-node) saturates. You see `connection timed out` or `connection refused` errors that appear completely random and intermittent, making them very difficult to diagnose. Fix: use larger instance types, increase the number of nodes, or enable `AWS_VPC_K8S_CNI_EXTERNALSNAT=false` and route outbound via VPC routing with custom networking.",
+      "**CoreDNS cascade failures.** Every kubernetes DNS lookup from every pod hits CoreDNS. At scale (200+ nodes, 2000+ pods), CoreDNS becomes a bottleneck and OOMKills. Signs: `lookup my-svc.production.svc.cluster.local on 172.20.0.10:53: read udp: i/o timeout`. The two-tier fix: (1) Deploy `cluster-proportional-autoscaler` to automatically scale CoreDNS replicas with node count. (2) Deploy NodeLocal DNSCache as a DaemonSet on every node so only cache misses go to CoreDNS — typically reducing DNS traffic by 70-90%.",
+      "**Security Groups for Pods (SGP) — the invisible density trap.** SGP assigns a dedicated branch ENI to each pod for granular security group enforcement at the pod layer. This is powerful but dramatically limits pod density — on a `m5.large` (3 ENIs total), you can only run 3 SGP-enabled pods. The rest stay Pending forever with no obvious error. Solution: use larger instances that support more ENIs, OR limit SGP only to pods that actually need SG enforcement (e.g., DB-facing pods), leaving the rest on the default shared ENI model."
+    ],
+    code: `# ================================================================
+# COMPLETE VPC CNI & NETWORK TROUBLESHOOTING PLAYBOOK
+# ================================================================
+
+# SCENARIO 1: Pods stuck in ContainerCreating / FailedCreatePodSandBox
+kubectl describe pod failing-pod-xyz -n app
+# Warning  FailedCreatePodSandBox  Failed to create pod sandbox:
+#   networkPlugin cni failed to set up pod network:
+#   failed to assign an IP address
+
+# CHECK 1: How many IPs remain in each subnet?
+aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=vpc-0a1b2c3d4e5f" \
+  --query "Subnets[*].{ID:SubnetId,AZ:AvailabilityZone,FreeIPs:AvailableIpAddressCount}" \
+  --output table
+# If FreeIPs < 10, you are dangerously close to exhaustion.
+
+# CHECK 2: Did the node hit EC2 ENI limits?
+kubectl logs -n kube-system ds/aws-node | grep -i "limit\|failed\|error" | tail -20
+# "Failed to increase IP pool: no capacity to attach a new ENI"
+
+# SCENARIO 2: Enable Prefix Delegation (hot fix - no node restart needed)
+kubectl set env daemonset aws-node -n kube-system \
+  ENABLE_PREFIX_DELEGATION=true \
+  WARM_PREFIX_TARGET=1 \
+  MINIMUM_IP_TARGET=8
+kubectl rollout status daemonset aws-node -n kube-system
+
+# Verify nodes now report dramatically higher pod capacity
+kubectl get nodes -o custom-columns=NAME:.metadata.name,MAX_PODS:.status.allocatable.pods
+# Before: 29   After: 110
+
+# SCENARIO 3: Diagnosing CoreDNS overload
+# Test DNS from inside a pod
+kubectl run dns-test --image=busybox --rm -it --restart=Never -- \
+  sh -c "time nslookup payment-svc.production.svc.cluster.local"
+
+# Check CoreDNS CPU and memory usage
+kubectl top pods -n kube-system | grep coredns
+
+# View CoreDNS error logs
+kubectl logs -n kube-system -l k8s-app=kube-dns --since=5m | \
+  grep -E "ERROR|SERVFAIL|timeout"`,
+    practice: "Your EKS cluster runs 500 pods across 20 nodes. After a major deployment adding 200 new pods, 30 are stuck in ContainerCreating. Simultaneously, other pods fail DNS resolution for external services like Stripe and SMTP. Diagnose and fix both issues in production without restarting nodes.",
+    solution: `# ================================================================
+# PROBLEM A: ContainerCreating (IP Exhaustion)
+# PROBLEM B: DNS failures for external services
+# ================================================================
+
+# --- FIX A: IP Exhaustion ---
+
+# Step 1: Identify which nodes are hosting stuck pods
+kubectl get pods --field-selector=status.phase=Pending -o wide
+
+# Step 2: Check subnet IP availability for those nodes
+NODE_NAME="ip-10-0-2-55.ec2.internal"
+SUBNET_ID=$(kubectl get node $NODE_NAME -o jsonpath='{.spec.providerID}' | \
+  xargs -I {} aws ec2 describe-instances \
+  --instance-ids {} --query "Reservations[0].Instances[0].SubnetId" --output text)
+
+aws ec2 describe-subnets --subnet-ids $SUBNET_ID \
+  --query "Subnets[0].AvailableIpAddressCount"
+# Result: 2 -- critically exhausted!
+
+# Step 3: Enable Prefix Delegation immediately (no restart needed)
+kubectl set env daemonset aws-node -n kube-system \
+  ENABLE_PREFIX_DELEGATION=true WARM_PREFIX_TARGET=1
+kubectl rollout status daemonset aws-node -n kube-system
+
+# Step 4: Force rescheduling of the stuck Pending pods
+# Kubernetes automatically recreates them and now the CNI has IPs available
+kubectl delete pods -l app=payment-worker --field-selector=status.phase=Pending
+
+# --- FIX B: External DNS failures ---
+
+# Step 1: Confirm DNS failure is CoreDNS-side
+kubectl run dns-probe --image=busybox --rm -it --restart=Never -- ash
+# nslookup api.stripe.com           -- fails (external)
+# nslookup payment-svc.svc.cluster.local -- also fails (internal)
+# BOTH failing = CoreDNS itself is broken, not a firewall or app issue.
+
+# Step 2: CoreDNS is OOMKilling!
+kubectl top pods -n kube-system | grep coredns
+# coredns-abc123  cpu: 980m/1000m  memory: 195Mi/200Mi  <- 98% CPU, near OOM!
+
+# Step 3: Emergency scaling of CoreDNS replicas
+kubectl scale deployment coredns -n kube-system --replicas=6
+
+# Step 4: Raise CoreDNS memory limit to prevent future OOMKills
+kubectl patch deployment coredns -n kube-system \
+  --type=json \
+  -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"400Mi"}]'
+
+# Step 5: Long-term fix — cluster-proportional-autoscaler
+# Scales CoreDNS replicas automatically with cluster growth (1 per 8 nodes)
+helm upgrade --install cluster-proportional-autoscaler \
+  stable/cluster-proportional-autoscaler --namespace kube-system \
+  --set config.ladder.nodesToReplicas='[[1,2],[8,3],[16,4],[32,5],[64,6]]'
+
+# Step 6: Install NodeLocal DNSCache to reduce CoreDNS load by 70-90%
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/kubernetes/master/cluster/addons/dns/nodelocaldns/nodelocaldns.yaml`
+  },
+  {
+    time: "Hour 12",
+    title: "EKS Troubleshooting Deepdive: Nodes, IAM, IRSA & Scheduling",
+    concept: [
+      "**NotReady Node Root Causes — a full diagnostic tree.** When `kubectl get nodes` shows `NotReady`, the `kubelet` has stopped sending heartbeats to the API Server. Controller manager waits 40s before marking NotReady, then 5 minutes before evicting pods. Root causes: (a) **DiskPressure** — root EBS volume hits 85% full; kubelet triggers an eviction loop. Image accumulation and verbose container logs are the most common drivers. (b) **MemoryPressure** — OS-level memory exhaustion. (c) **PIDPressure** — too many processes spawned by container restarts. (d) **Network partition** — SG blocks port 443 outbound from node to EKS API server, preventing heartbeats.",
+      "**DiskPressure deep dive — why it happens and the systemic fix.** Container images accumulate on nodes when the container runtime (containerd) doesn't GC old layers aggressively enough. Also, stdout/stderr logs from containers are written to `/var/log/containers/` on the node — if a single application logs 10MB/s, the disk fills in hours. Fix: (1) Set `imagePullPolicy: IfNotPresent`. (2) Configure `logrotate` in your AMI for container log files. (3) Set kubelet `--image-gc-high-threshold=70` so containerd GCs image layers before DiskPressure triggers.",
+      "**IRSA AccessDenied — five silent failure modes.** (1) **Namespace mismatch**: OIDC trust policy says `system:serviceaccount:production:api-sa` but pod is in `staging` — rejected. (2) **SDK token staleness**: old AWS SDK v1 doesn't auto-refresh the hourly IRSA token; pod gets AccessDenied until restarted. (3) **OIDC provider deleted**: all IRSA fails cluster-wide. (4) **Clock skew**: node NTP drift > 5 minutes makes JWT signature validation fail — happens during DiskPressure events when NTP can't write state files. (5) **Trust policy typo**: subtle mismatch in `StringEquals` condition key silently blocks assume-role calls.",
+      "**Karpenter failure modes explained.** Karpenter calls `ec2:RunInstances`, `ec2:CreateFleet`, `ec2:DescribeInstances`, `sts:GetCallerIdentity`, and `ssm:GetParameter` for AMI resolution. Missing `kms:Decrypt` permission is the most common silent failure — EBS volume encryption triggers a KMS decrypt that Karpenter's role cannot perform. Pods stay in Pending forever with `UnauthorizedOperation` buried deep in Karpenter controller logs.",
+      "**ImagePullBackOff — complete decision tree.** Work through this checklist: (1) Verify the tag actually exists in ECR with `aws ecr list-images`. (2) Check the EC2 node role has `ecr:GetDownloadUrlForLayer`, `ecr:BatchGetImage`, `ecr:GetAuthorizationToken`. (3) Check network path — private subnet nodes require NAT Gateway OR all three ECR VPC Endpoints (`ecr.api`, `ecr.dkr`, `s3`). (4) Check region — cross-region ECR pulls require pull-through cache configuration. (5) Check image mutability — if disabled and you re-pushed same tag, worker might be pulling a stale digest."
+    ],
+    code: `# ================================================================
+# COMPLETE NODE / IAM / SCHEDULING TROUBLESHOOTING PLAYBOOK
+# ================================================================
+
+# --- NODE NotReady DIAGNOSIS ---
+
+# Step 1: Identify which nodes are NotReady and why
+kubectl get nodes -o wide
+kubectl describe node ip-10-0-1-42.ec2.internal | grep -A15 "Conditions:"
+# DiskPressure   True    -> EBS root volume is filling up
+# MemoryPressure True    -> OS is OOM killing processes
+# Ready          False   -> kubelet completely unresponsive
+
+# Step 2: Access the node via AWS Systems Manager (no SSH keys needed)
+INSTANCE_ID=$(aws ec2 describe-instances \
+  --filters "Name=private-dns-name,Values=ip-10-0-1-42.ec2.internal" \
+  --query "Reservations[0].Instances[0].InstanceId" --output text)
+aws ssm start-session --target $INSTANCE_ID
+
+# Inside the node:
+df -h /               # check root volume usage
+du -sh /var/log/containers/* 2>/dev/null | sort -rh | head -5  # find log bloat
+crictl images | awk '{print $3, $4}' | sort -k2 -h  # large cached images
+crictl rmi --prune    # remove ALL unused images immediately
+
+# Recover disk quickly then uncordon
+kubectl uncordon ip-10-0-1-42.ec2.internal
+
+# --- IRSA TOKEN DEEP DEBUGGING ---
+
+# Step 1: Verify the pod actually has the IRSA token injected
+kubectl exec -it api-pod-xyz -n production -- bash
+env | grep -E "AWS_ROLE_ARN|AWS_WEB_IDENTITY_TOKEN"
+# Must show:
+# AWS_ROLE_ARN=arn:aws:iam::123456789:role/api-irsa-role
+# AWS_WEB_IDENTITY_TOKEN_FILE=/var/run/secrets/eks.amazonaws.com/serviceaccount/token
+
+# Step 2: Decode the JWT to see what namespace/SA it claims
+cat $AWS_WEB_IDENTITY_TOKEN_FILE | cut -d '.' -f2 | \
+  base64 -d 2>/dev/null | python3 -m json.tool
+# Look for: "sub": "system:serviceaccount:production:api-sa"
+# If namespace is wrong -> IRSA trust policy won't match -> AccessDenied
+
+# Step 3: Manually test assume-role with the token
+aws sts assume-role-with-web-identity \
+  --role-arn arn:aws:iam::123456789:role/api-irsa-role \
+  --role-session-name debug-test \
+  --web-identity-token file://$AWS_WEB_IDENTITY_TOKEN_FILE
+# If this fails with NotAuthorized -> trust policy Condition mismatch.
+
+# --- KARPENTER STUCK PODS DIAGNOSIS ---
+
+kubectl logs -n kube-system -l app.kubernetes.io/name=karpenter -f | \
+  grep -E "ERROR|WARN|could not|UnauthorizedOperation"
+
+kubectl get nodeclaim -A
+kubectl describe nodeclaim <name>  # shows exact provisioning failure reason`,
+    practice: "At 2am, 4 production nodes go NotReady simultaneously and 80 pods are being evicted. The remaining running pods are simultaneously getting AccessDenied errors on AWS Secrets Manager. Walk through a complete incident response runbook and identify the single systemic root cause connecting both incidents.",
+    solution: `# ================================================================
+# INCIDENT RESPONSE RUNBOOK
+# Root Cause: DiskPressure -> NTP clock skew -> IRSA token rejection
+# ================================================================
+
+# --- PHASE 1: TRIAGE (first 2 minutes) ---
+kubectl get nodes -o wide
+# ip-10-0-1-42  NotReady  DiskPressure=True
+# ip-10-0-2-17  NotReady  DiskPressure=True
+# (4 nodes total)
+
+kubectl get pods -A | grep -c Evicted   # how many pods kicked off?
+
+# --- PHASE 2: IMMEDIATE MITIGATION ---
+# Cordon all NotReady nodes to stop Kubernetes scheduling new pods there
+for node in ip-10-0-1-42 ip-10-0-2-17 ip-10-0-3-88 ip-10-0-1-99; do
+  kubectl cordon $node.ec2.internal
+done
+
+# Scale up healthy node groups to absorb evicted workloads
+aws eks update-nodegroup-config \
+  --cluster-name prod-cluster \
+  --nodegroup-name general \
+  --scaling-config minSize=5,maxSize=15,desiredSize=12
+kubectl get nodes -w  # watch new nodes join
+
+# --- PHASE 3: RESOLVE DiskPressure ---
+aws ssm start-session --target $INSTANCE_ID
+
+# Inside node: find root cause
+df -h /  # shows: 100% full!
+du -sh /var/log/containers/* 2>/dev/null | sort -rh | head -5
+# /var/log/containers/payment-worker_prod_*.log  -> 15GB from one verbose service!
+
+# Immediate disk recovery
+truncate -s 0 /var/log/containers/payment-worker_production_*.log
+crictl rmi --prune   # reclaim 10-20GB of stale image layers
+df -h /  # now at 20% usage
+
+# Exit SSM session, then uncordon
+kubectl uncordon ip-10-0-1-42.ec2.internal
+
+# Permanent fix: bake logrotate config into AMI via Terraform UserData
+# user_data = base64encode(<<-EOF
+# #!/bin/bash
+# cat > /etc/logrotate.d/containers << 'LOGCONF'
+# /var/log/containers/*.log {
+#   missingok daily rotate 3 compress copytruncate size 100M
+# }
+# LOGCONF
+# EOF)
+
+# --- PHASE 4: ROOT CAUSE OF IRSA AccessDenied ---
+
+# WHY are pods getting AccessDenied during a disk event?
+# When the root EBS volume is 100% full, the OS cannot write files.
+# NTP (chrony/ntpd) writes its sync state to disk — which FAILED.
+# Result: node clock drifted > 5 minutes while disk was full.
+# JWT tokens issued > 5 minutes ago are REJECTED by AWS STS.
+# This is the hidden link between DiskPressure and IRSA failures.
+
+# Check clock drift on affected nodes
+aws ssm send-command \
+  --instance-ids $INSTANCE_ID \
+  --document-name "AWS-RunShellScript" \
+  --parameters '"commands":["chronyc tracking | grep 'System time'"]'
+# Output: 'System time : 318.2 seconds slow of NTP'
+# 318 seconds drift! AWS STS tolerance is 300 seconds. REJECTED.
+
+# Immediate fix: force NTP resync across all affected nodes
+aws ssm send-command \
+  --instance-ids "i-0abc123" "i-0def456" "i-0ghi789" "i-0jkl012" \
+  --document-name "AWS-RunShellScript" \
+  --parameters '"commands":["chronyc makestep && chronyc tracking"]'
+# Pods automatically recover their IRSA credentials on the next SDK retry.
+# No pod restarts needed!
+
+# --- PHASE 5: POST-INCIDENT PREVENTION (Terraform) ---
+
+# 1. CloudWatch Alarm alerting at 80% disk (before 85% eviction threshold)
+resource "aws_cloudwatch_metric_alarm" "disk_pressure" {
+  alarm_name          = "eks-node-disk-critical"
+  metric_name         = "node_filesystem_utilization"
+  namespace           = "ContainerInsights"
+  threshold           = 80   # alert before eviction!
+  alarm_actions       = [aws_sns_topic.oncall.arn]
+}
+
+# 2. Kubelet image GC and eviction thresholds via launch template
+# --image-gc-high-threshold=70   # GC images when disk hits 70%
+# --image-gc-low-threshold=50    # stop GC when disk is below 50%
+# --eviction-hard=nodefs.available<15%,memory.available<200Mi
+# --eviction-soft=nodefs.available<20%
+# --eviction-soft-grace-period=nodefs.available=2m
+
+# 3. Ensure Security Group allows outbound UDP 123 to Amazon Time Sync Service
+resource "aws_security_group_rule" "node_ntp" {
+  type              = "egress"
+  from_port         = 123
+  to_port           = 123
+  protocol          = "udp"
+  cidr_blocks       = ["169.254.169.123/32"]  # AWS NTP endpoint
+  security_group_id = aws_security_group.node_sg.id
+}`
+  },
+  {
     time: "Homework Project",
     title: "Build a Production-Grade EKS Cluster from Scratch",
     concept: [

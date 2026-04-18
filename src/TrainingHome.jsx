@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag, Layers, Key, DatabaseZap } from "lucide-react";
+import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag, Layers, Key, DatabaseZap, TerminalSquare } from "lucide-react";
 
 const courses = [
   {
@@ -107,13 +107,13 @@ const courses = [
     title: "AWS EKS Managed Nodes",
     subtitle: "Deep Dive & Best Practices",
     description:
-      "Ten hours mastering EKS managed node groups — architecture, VPC CNI networking, Cluster Autoscaler vs Karpenter, IRSA, security hardening, AMI upgrades, cost optimization, and production patterns.",
-    duration: "10 hours",
-    lessons: 10,
+      "Thirteen hours mastering EKS managed node groups — architecture, VPC CNI networking, Cluster Autoscaler vs Karpenter, IRSA, security hardening, AMI upgrades, cost optimization, and Oteemo-style technical troubleshooting deep dives (CrashLoopBackOff, DNS scaling, ImagePull failures).",
+    duration: "13 hours",
+    lessons: 13,
     icon: Boxes,
     gradient: "from-blue-500 via-sky-500 to-cyan-500",
     glowColor: "rgba(14,165,233,0.15)",
-    tags: ["EKS", "Managed Nodes", "Karpenter", "IRSA", "VPC CNI", "Security"],
+    tags: ["EKS", "Managed Nodes", "Troubleshooting", "IRSA", "VPC CNI", "Karpenter"],
   },
   {
     id: "hsm-swift",
@@ -247,13 +247,27 @@ const courses = [
     title: "Enterprise FastAPI",
     subtitle: "High-Performance Python APIs",
     description:
-      "Ten hours mastering FastAPI — Pydantic, Dependency Injection, Uvicorn workers, async/await, Database Pooling, WebSockets, SSE streaming, and React integration for real-time dashboards.",
-    duration: "10 hours",
-    lessons: 10,
+      "Fifteen hours mastering FastAPI — Pydantic V2, Dependency Injection, Uvicorn workers, async/await, Database Pooling, WebSockets, SSE streaming, OAuth2/JWT security, error handling, file uploads, testing, APIRouter, and React integration.",
+    duration: "15 hours",
+    lessons: 15,
     icon: DatabaseZap,
     gradient: "from-emerald-500 via-teal-500 to-cyan-500",
     glowColor: "rgba(20,184,166,0.15)",
     tags: ["FastAPI", "Async", "WebSockets", "SSE", "Pydantic", "React"],
+  },
+  {
+    id: "devops-concepts",
+    path: "/devops",
+    title: "AWS DevOps Concepts",
+    subtitle: "Enterprise Mid-Level Architecture",
+    description:
+      "Ten hours mastering Enterprise DevOps on AWS — Trunk-Based CI/CD, Immutable Infrastructure, robust Terraform (with decoupled state), EKS deep dive, Karpenter, and stateless GitOps via ArgoCD.",
+    duration: "10 hours",
+    lessons: 10,
+    icon: TerminalSquare,
+    gradient: "from-blue-500 via-indigo-500 to-cyan-500",
+    glowColor: "rgba(59,130,246,0.15)",
+    tags: ["Terraform", "EKS", "ArgoCD", "GitOps", "CI/CD", "Karpenter"],
   },
 ];
 
