@@ -3,11 +3,12 @@ export const eksLessons = [
     time: "Hour 1",
     title: "EKS Architecture & Control Plane Fundamentals",
     concept: [
-      "**What is Amazon EKS?** Amazon Elastic Kubernetes Service (EKS) is a fully managed Kubernetes control plane. AWS runs the three etcd nodes, the API server, the scheduler, and the controller manager across three Availability Zones for you. You never SSH into a control-plane node — AWS patches it, scales it, and ensures its HA. Your responsibility starts at the **data plane**: the EC2 instances (or Fargate profiles) where your pods actually run.",
-      "**Control Plane vs. Data Plane.** The control plane is the 'brain' of the cluster. It decides which pods run where, watches for failures, and exposes the Kubernetes API (typically at `https://<cluster-id>.eks.amazonaws.com`). The data plane consists of the **worker nodes** — the EC2 instances that join the cluster and accept pod scheduling. Managed Node Groups are the easiest way to provision these worker nodes.",
-      "**What is a Managed Node Group?** A Managed Node Group (MNG) is an AWS-managed Auto Scaling Group (ASG) of EC2 instances that are automatically registered as Kubernetes nodes. AWS handles: provisioning the instances, bootstrapping the `kubelet` and `kube-proxy`, registering nodes with the EKS cluster, and performing rolling updates when you change the AMI or instance type. You define the desired state; AWS handles the lifecycle.",
-      "**Why Managed Node Groups over Self-Managed?** With self-managed nodes, you create your own ASG, write your own bootstrap script (`/etc/eks/bootstrap.sh`), manage AMI updates manually, and handle node draining during upgrades. With MNGs, all of this is automated. AWS also automatically tags the instances and applies the correct `aws-auth` ConfigMap entry so the nodes can join the cluster instantly.",
-      "**EKS Cluster Endpoint Access.** The API server endpoint can be public (accessible from the internet), private (accessible only from within the VPC), or both. For production, best practice is to set `endpoint_private_access = true` and `endpoint_public_access = false` (or restrict it to your corporate CIDR). This ensures that `kubectl` commands can only be issued from within the VPC or over a VPN.",
+      "**What is Amazon EKS?** Amazon Elastic Kubernetes Service (EKS) is a fully managed Kubernetes control plane. AWS runs the three `etcd` nodes, the API server, the scheduler, and the controller manager across three Availability Zones for you. You never SSH into a control-plane node — AWS patches it, scales it, and maintains HA for you. Your responsibility starts at the **data plane**: the EC2 instances (or Fargate profiles) where your pods actually run.",
+      "**Control Plane vs. Data Plane.** The control plane is the 'brain' of the cluster — it decides which pods run where, watches for failures, and exposes the Kubernetes API (at `https://<cluster-id>.eks.amazonaws.com`). The data plane consists of **worker nodes** — EC2 instances that join the cluster. Data plane options: **Managed Node Groups** (AWS manages the EC2 lifecycle), **Self-Managed Nodes** (you manage everything), or **AWS Fargate** (serverless, no nodes to manage).",
+      "**What is a Managed Node Group?** A Managed Node Group (MNG) is an AWS-managed Auto Scaling Group of EC2 instances that are automatically registered as Kubernetes nodes. AWS handles: provisioning instances, bootstrapping `kubelet` and `kube-proxy`, registering nodes with the cluster, and performing rolling updates. Critical fact from AWS docs: every resource — EC2 instances and the ASG itself — runs inside YOUR AWS account, not AWS's. The ASG spans every subnet you specify at group creation time.",
+      "**Node Auto Repair — what AWS actually monitors.** MNGs support optional Node Auto Repair, which uses the EKS Node Monitoring Agent (installable as an EKS add-on or via Helm). Auto Repair reacts to: (1) `Ready` condition failure (kubelet heartbeat loss), (2) manually deleted node objects, (3) instances that fail to join the cluster. With the Node Monitoring Agent installed, it also reacts to `AcceleratedHardwareReady` (GPU/Neuron), `ContainerRuntimeReady` (containerd), `KernelReady`, `NetworkingReady`, and `StorageReady`. Crucially, Auto Repair does NOT react to `DiskPressure`, `MemoryPressure`, or `PIDPressure` — AWS treats these as workload issues, not node failures. Linux-only; not available for Windows nodes.",
+      "**Scaling Configuration Sync — a subtle production gotcha.** EKS periodically syncs the MNG's stored scaling configuration to match the actual ASG values. When you trigger a node group update or upgrade WITHOUT explicitly changing the scaling config, the workflow uses the LIVE ASG values (which may have been modified by Cluster Autoscaler) as the starting point — NOT the stored `desiredSize`. The stored scaling config only takes precedence when you explicitly pass it in an `UpdateNodegroupConfig` API call. This means you should never assume Terraform's `desired_size` reflects the live node count when autoscaling is active.",
+      "**EKS Cluster Endpoint Access.** The API server endpoint can be public, private, or both. For production, best practice is `endpoint_private_access = true` and `endpoint_public_access = false` (or restrict it to your corporate CIDR). This ensures `kubectl` commands can only be issued from within the VPC or over a VPN/Direct Connect.",
     ],
     code: `# Create an EKS cluster with eksctl (quickstart)
 eksctl create cluster \\
@@ -32,27 +33,41 @@ aws eks update-kubeconfig --name my-cluster --region us-east-1
 kubectl get nodes -o wide
 # NAME                          STATUS   ROLES    AGE   VERSION
 # ip-10-0-1-42.ec2.internal    Ready    <none>   3m    v1.29.0-eks-...
-# ip-10-0-2-17.ec2.internal    Ready    <none>   3m    v1.29.0-eks-...
-# ip-10-0-3-88.ec2.internal    Ready    <none>   3m    v1.29.0-eks-...`,
-    practice: "Create an EKS cluster using eksctl with a managed node group. Verify the cluster status, update kubeconfig, and confirm all nodes are in Ready state.",
+
+# Enable Node Auto Repair (EKS add-on + update node group)
+aws eks create-addon \\
+  --cluster-name my-cluster \\
+  --addon-name eks-node-monitoring-agent
+aws eks update-nodegroup-config \\
+  --cluster-name my-cluster \\
+  --nodegroup-name workers \\
+  --node-repair-config enabled=true`,
+    practice: "Create an EKS cluster using eksctl with a managed node group. Verify the cluster status, update kubeconfig, confirm all nodes are in Ready state, and enable Node Auto Repair.",
     solution: `# Full verification flow:
 aws eks describe-cluster --name my-cluster \\
   --query "cluster.{Status:status,Endpoint:endpoint,Version:version}"
 
 kubectl get nodes
 kubectl get pods -n kube-system
-# You should see coredns, kube-proxy, and aws-node (VPC CNI) pods running`,
+# You should see coredns, kube-proxy, and aws-node (VPC CNI) pods
+
+# Verify Node Auto Repair is active:
+aws eks describe-nodegroup \\
+  --cluster-name my-cluster --nodegroup-name workers \\
+  --query "nodegroup.nodeRepairConfig"
+# { "enabled": true }`,
   },
   {
     time: "Hour 2",
     title: "Managed Node Group Configuration Deep Dive",
     concept: [
-      "**AMI Types.** When you create a managed node group, you choose an AMI type. The most common options are: `AL2_x86_64` (Amazon Linux 2, default), `AL2023_x86_64_STANDARD` (Amazon Linux 2023, newer), `AL2_ARM_64` (for Graviton instances), and `BOTTLEROCKET_x86_64` (a minimal, security-hardened OS built specifically for containers). Bottlerocket is the best practice for production because it has a read-only root filesystem, no shell, and automatic atomic updates.",
-      "**Instance Types and Capacity Types.** You can specify one or more instance types per node group. For cost optimization, specify multiple types (e.g., `t3.large`, `m5.large`, `m5a.large`) so the ASG can pick whichever has capacity. You can also choose between `ON_DEMAND` (reliable, higher cost) and `SPOT` (up to 90% cheaper, but can be reclaimed). Best practice: run your stateless workloads on Spot, stateful on On-Demand.",
-      "**Disk Size and Encryption.** The `disk_size` parameter (default 20 GB) controls the root EBS volume size for each node. For production workloads with large container images or local ephemeral storage needs, set this to 100 GB or more. Always enable EBS encryption using a KMS key by specifying `disk_size` and configuring the launch template with `encrypted = true`. This is a compliance requirement for most enterprises.",
-      "**Labels, Taints, and Node Selectors.** Labels are key-value pairs attached to nodes (e.g., `workload=cpu-intensive`). Taints prevent pods from scheduling on a node unless the pod has a matching toleration. Use taints to dedicate node groups to specific workloads. For example, taint GPU nodes with `nvidia.com/gpu=true:NoSchedule` so only ML pods (with the toleration) land there. Labels and taints are configured at the node group level, not per-node.",
-      "**Launch Templates.** For advanced configuration (custom AMI, user data scripts, specific EBS settings, metadata options), you attach a **Launch Template** to the managed node group. The launch template overrides parts of the default configuration. Important: if you specify a custom AMI in the launch template, AWS will NOT automatically update the AMI during node group upgrades — you become responsible for AMI lifecycle management.",
-      "**Subnet Placement.** Always place your managed node groups in **private subnets**. Nodes should never have public IP addresses. Outbound internet access (for pulling images from ECR, downloading packages) should go through a NAT Gateway. For multi-AZ resilience, spread nodes across at least 2 (ideally 3) private subnets in different Availability Zones.",
+      "**AMI Types — the complete list from AWS docs.** When creating an MNG, you choose an AMI type. Current options include: `AL2023_x86_64_STANDARD` (Amazon Linux 2023 x86 — the current recommended default), `AL2_x86_64` (Amazon Linux 2 — legacy, approaching end-of-life), `AL2023_ARM_64_STANDARD` and `AL2_ARM_64` (for Graviton instances), `BOTTLEROCKET_x86_64` and `BOTTLEROCKET_ARM_64` (security-hardened container OS with read-only root filesystem and no shell), `BOTTLEROCKET_x86_64_NVIDIA` (for GPU nodes), and Windows variants like `WINDOWS_CORE_2019_x86_64`. Bottlerocket is the best practice for production. AL2023 is preferred over AL2 for all new deployments.",
+      "**Capacity Types — you cannot mix them.** A single MNG deploys ONLY On-Demand OR ONLY Spot instances — never both in the same group. `ON_DEMAND` uses a `prioritized` allocation strategy, working through instance types in the order you specify. `SPOT` uses `price-capacity-optimized` (for clusters on Kubernetes 1.28+) or `capacity-optimized` (1.27 and below). AWS EKS automatically applies the label `eks.amazonaws.com/capacityType: SPOT` or `ON_DEMAND` to all nodes so your scheduler can distinguish them.",
+      "**Disk Size and Encryption.** The `disk_size` parameter (default 20 GB) controls the root EBS volume for each node. Set to 100 GB+ for production. Important: if you attach a custom launch template, the API-level `disk_size` is IGNORED — the launch template's volume block device mapping takes full control. To encrypt volumes WITHOUT a launch template, enable account-level EBS encryption-by-default in AWS EC2 settings.",
+      "**Labels, Taints, and AWS-applied Labels.** You set custom labels and taints on the MNG and they apply to all nodes. AWS additionally auto-applies `eks.amazonaws.com/` prefixed labels: `eks.amazonaws.com/nodegroup`, `eks.amazonaws.com/nodegroup-image`, `eks.amazonaws.com/capacityType`, and `eks.amazonaws.com/sourceLaunchTemplateId` (when using custom launch templates). Taints enforce node dedication — e.g., taint GPU nodes with `nvidia.com/gpu=true:NoSchedule` so only ML workloads with a matching toleration land there.",
+      "**Launch Templates — the rules that matter.** To use a custom Launch Template, you specify its ID and version when creating the MNG. Three critical rules from the AWS docs: (1) If you use a custom AMI in the launch template, AWS will NOT auto-update the AMI during node group upgrades — you own the entire AMI lifecycle. (2) If you do NOT specify a custom launch template at creation, EKS auto-generates one — NEVER manually modify the auto-generated template, this causes errors. (3) For Spot node groups using a custom launch template, pass multiple instance types via the API — do NOT define a single instance type inside the launch template itself.",
+      "**Subnet Placement and the Public IP Rule.** Always place MNGs in private subnets. If you use a public subnet created on or after April 22, 2020, the subnet MUST have `MapPublicIpOnLaunch = true` or nodes will fail to join the cluster. MNGs CANNOT be deployed on AWS Outposts or in AWS Wavelength, but CAN be deployed in AWS Local Zones. For private subnet nodes to pull container images, you need either a NAT Gateway or three VPC Interface Endpoints: `ecr.api`, `ecr.dkr`, and an S3 gateway endpoint.",
+      "**Shared Responsibility for AMI Patching.** When nodes run an EKS-optimized AMI: AWS builds the patched AMI when CVEs are reported — but YOU must deploy it to your node groups (triggering a rolling update). When nodes run a custom AMI: YOU are responsible for both building the patched AMI AND deploying it. There are no additional charges for MNG itself — you pay only for EC2, EBS volumes, EKS cluster hours, and other provisioned AWS resources.",
     ],
     code: `# === Terraform: Managed Node Group with best practices ===
 module "eks" {
@@ -63,61 +78,53 @@ module "eks" {
   vpc_id          = module.vpc.vpc_id
   subnet_ids      = module.vpc.private_subnets
 
-  # -- Managed Node Groups --
   eks_managed_node_groups = {
-    # General-purpose On-Demand nodes
+    # On-Demand: stateful / fault-intolerant workloads
     general = {
-      ami_type       = "AL2023_x86_64_STANDARD"
+      ami_type       = "AL2023_x86_64_STANDARD"  # recommended over AL2
       instance_types = ["m5.xlarge", "m5a.xlarge", "m6i.xlarge"]
-      capacity_type  = "ON_DEMAND"
+      capacity_type  = "ON_DEMAND"  # cannot mix with SPOT in same group
       min_size       = 2
       max_size       = 10
       desired_size   = 3
-      disk_size      = 100
+      disk_size      = 100  # ignored if custom launch template used
 
-      labels = {
-        role = "general"
-        env  = "production"
-      }
-
+      labels = { role = "general", env = "production" }
       tags = {
         "k8s.io/cluster-autoscaler/enabled"     = "true"
         "k8s.io/cluster-autoscaler/prod-cluster" = "owned"
       }
     }
 
-    # Cost-optimized Spot nodes for batch/stateless workloads
+    # Spot: stateless / fault-tolerant workloads (separate group)
     spot_workers = {
       ami_type       = "AL2023_x86_64_STANDARD"
+      # Diversify instance types to reduce interruption frequency
       instance_types = ["m5.large", "m5a.large", "m5d.large", "m6i.large"]
-      capacity_type  = "SPOT"
+      capacity_type  = "SPOT"  # uses price-capacity-optimized for k8s 1.28+
       min_size       = 0
       max_size       = 20
       desired_size   = 3
       disk_size      = 50
 
-      labels = {
-        role     = "spot-worker"
-        workload = "batch"
-      }
-
-      taints = [{
-        key    = "spot"
-        value  = "true"
-        effect = "NO_SCHEDULE"
-      }]
+      labels = { role = "spot-worker", workload = "batch" }
+      taints = [{ key = "spot", value = "true", effect = "NO_SCHEDULE" }]
     }
   }
 }`,
-    practice: "Create a Terraform configuration with two node groups: a general On-Demand group and a Spot group with taints. Deploy and verify both groups register correctly.",
+    practice: "Create a Terraform configuration with two node groups: a general On-Demand group and a Spot group with taints. Deploy and verify both groups register correctly with the correct capacity type labels.",
     solution: `# After terraform apply:
 kubectl get nodes --show-labels | grep role
-# ip-10-0-1-x   role=general
-# ip-10-0-2-x   role=spot-worker
+# ip-10-0-1-x   eks.amazonaws.com/capacityType=ON_DEMAND,role=general
+# ip-10-0-2-x   eks.amazonaws.com/capacityType=SPOT,role=spot-worker
 
-# Verify taints on spot nodes
+# Verify taints on spot nodes:
 kubectl describe node ip-10-0-2-x | grep Taints
-# Taints: spot=true:NoSchedule`,
+# Taints: spot=true:NoSchedule
+
+# Verify AWS auto-applied capacity label:
+kubectl get node ip-10-0-2-x -o jsonpath='{.metadata.labels.eks\.amazonaws\.com/capacityType}'
+# SPOT`,
   },
   {
     time: "Hour 3",
@@ -699,11 +706,12 @@ kubectl uncordon <node-name>`,
     time: "Hour 10",
     title: "EKS Troubleshooting Deepdive: Pod Lifecycle & CrashLoops",
     concept: [
-      "**The Technical Deepdive Paradigm.** When troubleshooting EKS in a high-stakes environment or a technical interview (like Oteemo, where consultants must demonstrate the 'why' behind failures), you cannot just say 'I use kubectl logs'. You must systematically understand the Kubernetes reconciliation loop. Pod failure points occur during Scheduling, Container Creation, Execution, or Liveness probe checks.",
-      "**Debugging CrashLoopBackOff.** A \`CrashLoopBackOff\` means the kubelet started the container, but it exited prematurely. The kubelet then pauses with an exponentially increasing backoff before restarting it. *Your first step* is always checking the Exit Code via \`kubectl describe pod\`. An exit code of \`137\` means \`OOMKilled\` (Out Of Memory - you hit the cgroup memory limit). An exit code of \`143\` means \`SIGTERM\` (graceful stop), usually from scaling down or draining. An exit code of \`1\` means an application-level error (e.g., failed to connect to DB).",
-      "**Previous Logs.** If the container crashes instantly, \`kubectl logs <pod>\` might be empty because it restarted too fast. Always use **\`kubectl logs <pod> --previous\`** to see the logs from the dead container that triggered the crash loop.",
-      "**Liveness vs. Readiness Probe Failures.** A \`CrashLoopBackOff\` isn't always a crash. If your application takes 60 seconds to boot, but your \`livenessProbe\` \`initialDelaySeconds\` is set to 20, the probe fails 3 times, Kubernetes assumes the pod is stuck, issues a \`SIGKILL\` (137), and restarts it. This creates an infinite crash loop without the app actually crashing. Readiness probe failures, on the other hand, just remove the pod from the Service endpoint (no restarts).",
-      "**InitContainer Deadlocks.** A pod will hang in \`Init:CrashLoopBackOff\` if an initContainer fails. Since init containers run sequentially before main containers, a failure here completely halts pod startup. Always debug the init container explicitly: \`kubectl logs <pod> -c <init-container-name>\`."
+      "**The Technical Deepdive Paradigm.** When troubleshooting EKS in a high-stakes environment or a technical interview (like Oteemo, where consultants must demonstrate the 'why' behind failures), you cannot just say 'I use kubectl logs'. You must systematically understand the Kubernetes reconciliation loop. Pod failure points occur at five distinct stages: (1) **Scheduling** — the scheduler cannot find a node that satisfies the pod's CPU, memory, nodeSelector, or taint requirements; (2) **Image Pull** — containerd cannot fetch the container image from ECR or Docker Hub; (3) **Container Creation** — the sandbox networking (CNI) or volume mount fails before the process even starts; (4) **Execution** — the application process itself crashes; (5) **Probe checks** — liveness or readiness probe returns a failure code after the app is running.",
+      "**Understanding CrashLoopBackOff deeply.** A `CrashLoopBackOff` is NOT just 'the app is broken'. It is a kubelet self-protection mechanism. Each time a container exits for any reason, the kubelet waits an exponentially growing delay before restarting: 10s → 20s → 40s → 80s → 160s → 300s (max cap). This means a pod in CrashLoopBackOff may *appear* intermittently running to monitoring dashboards even though it is fundamentally broken — it briefly starts, gets killed, and waits. Understanding this pattern prevents the mistake of thinking the pod is 'mostly fine'.",
+      "**Exit Code Anatomy — your first and most important diagnostic signal.** Exit Code `137` = OOMKilled. The Linux cgroup memory controller issued a hard SIGKILL because the process exceeded `resources.limits.memory`. Exit Code `143` = received SIGTERM (graceful stop requested by kubelet) — common during pod eviction or node drain. Exit Code `1` = an unhandled application-level exception such as a null pointer, failed DB connection, or missing config. Exit Code `2` = misuse of a shell built-in (bad bash/sh script). Exit Code `0` = the application exited cleanly — this causes a crash loop in a Deployment because Kubernetes immediately restarts a container that exited with code 0, thinking it should always be running.",
+      "**OOMKilled Mechanics (Exit 137) — the JVM Trap that hits every enterprise team.** Java is the #1 OOM offender on EKS. By default the JVM calculates its heap using the **physical host memory** (e.g., 64GB node), completely ignoring the cgroup container memory limit (e.g., 2GB pod limit). So on a 64GB node, the JVM starts allocating a 16GB heap, immediately exceeds the 2GB container limit, and the kernel OOMKills it within seconds of startup. The fix is always `-XX:MaxRAMPercentage=75.0`, which tells the JVM to calculate heap as a percentage of the container's cgroup limit, not the host. Set `-XX:+HeapDumpOnOutOfMemoryError` so when a real memory leak eventually occurs, the JVM writes a heap dump to a persistent volume before dying — giving you the forensic data needed to find the root cause instead of guessing.",
+      "**Liveness vs. Readiness Probe — the difference that trips up senior engineers.** These two probes have completely different side effects. A **livenessProbe** failure triggers a `SIGKILL` followed by an immediate container restart — it is destructive. A **readinessProbe** failure simply removes the pod from the Service's active Endpoints (stops receiving traffic) but does NOT restart the container — it is protective and reversible. The dangerous misconfiguration: setting `livenessProbe.initialDelaySeconds` shorter than the application's actual startup time. If Spring Boot takes 45 seconds to start, but `initialDelaySeconds=20`, the liveness probe fires at 20s, gets a 503, fails 3 times over 30 seconds (default `failureThreshold=3`), and kubelet kills the pod — creating an infinite crash loop with no actual application bug.",
+      "**InitContainer Deadlocks — how Flyway migrations block all traffic.** Init containers run strictly sequentially before main containers are ever started. If an initContainer exits with a non-zero code, the main container NEVER starts and the pod enters `Init:CrashLoopBackOff`. Enterprise teams commonly use initContainers for Flyway/Liquibase schema migrations. If the DB connection string (injected via Kubernetes Secret) was rotated in AWS Secrets Manager but the Kubernetes Secret was not yet updated, the initContainer gets a credentials-rejected error, crashes, and the entire deployment grinds to a halt. Debugging requires explicitly naming the initContainer: `kubectl logs <pod> -c db-flyway-migrations --previous`. Standard `kubectl logs <pod>` does NOT show initContainer output."
     ],
     code: `# === Systematic CrashLoopBackOff Debugging ===
 
@@ -790,12 +798,12 @@ kubectl get vpa payment-api-vpa -o json | jq '.status.recommendation'`
     time: "Hour 11",
     title: "EKS Troubleshooting Deepdive: Networking & VPC CNI",
     concept: [
-      "**The VPC CNI Architecture (why it's different from other K8s CNIs).** Unlike Flannel or Calico which create virtual overlay networks, the AWS VPC CNI assigns *real* VPC IP addresses directly to each Pod. When a pod starts, the `aws-node` DaemonSet calls the EC2 API to assign an unused secondary IP from the subnet, or attach a brand new ENI. This is why pods on EKS are directly routable from RDS and on-prem networks — there is no IP translation. But this tight coupling to EC2 ENIs means you are subject to real EC2 infrastructure limits that become painful at scale.",
-      "**ENI / IP limits — the hard ceiling.** Every EC2 instance type has a hard limit on ENIs and secondary IPs per ENI. A `m5.large` supports 3 ENIs × 10 secondary IPs = 30 pod IPs maximum. When you hit this limit, new pods fail with `FailedCreatePodSandBox: failed to allocate IP`. You can view instance limits in the AWS docs or `aws ec2 describe-instance-types --instance-types m5.large --query 'InstanceTypes[0].NetworkInfo'`.",
-      "**Prefix Delegation — the 4x density multiplier.** With `ENABLE_PREFIX_DELEGATION=true`, the VPC CNI assigns /28 CIDR prefixes (16 IPs each) instead of individual IPs. This turns a `m5.large` from 29 pods → 110 pods. A /28 block is consumed atomically from one ENI slot, providing 16 addresses. This can be enabled on live clusters with zero node reboots — only the `aws-node` DaemonSet pods roll restart.",
-      "**SNAT and outbound timeouts explained.** SNAT translates a pod's private IP (10.0.1.5) to the node's primary IP (10.0.1.100) so packets can exit via the NAT Gateway. Under high connection churn — millions of short-lived HTTP connections — the SNAT port table (approximately 64,511 concurrent outbound connections per-node) saturates. You see `connection timed out` or `connection refused` errors that appear completely random and intermittent, making them very difficult to diagnose. Fix: use larger instance types, increase the number of nodes, or enable `AWS_VPC_K8S_CNI_EXTERNALSNAT=false` and route outbound via VPC routing with custom networking.",
-      "**CoreDNS cascade failures.** Every kubernetes DNS lookup from every pod hits CoreDNS. At scale (200+ nodes, 2000+ pods), CoreDNS becomes a bottleneck and OOMKills. Signs: `lookup my-svc.production.svc.cluster.local on 172.20.0.10:53: read udp: i/o timeout`. The two-tier fix: (1) Deploy `cluster-proportional-autoscaler` to automatically scale CoreDNS replicas with node count. (2) Deploy NodeLocal DNSCache as a DaemonSet on every node so only cache misses go to CoreDNS — typically reducing DNS traffic by 70-90%.",
-      "**Security Groups for Pods (SGP) — the invisible density trap.** SGP assigns a dedicated branch ENI to each pod for granular security group enforcement at the pod layer. This is powerful but dramatically limits pod density — on a `m5.large` (3 ENIs total), you can only run 3 SGP-enabled pods. The rest stay Pending forever with no obvious error. Solution: use larger instances that support more ENIs, OR limit SGP only to pods that actually need SG enforcement (e.g., DB-facing pods), leaving the rest on the default shared ENI model."
+      "**The VPC CNI Architecture — why EKS networking is fundamentally different.** Unlike Flannel or Calico which create virtual overlay networks (pods get fake IPs translated via tunnels), the AWS VPC CNI assigns *real* VPC IP addresses pulled directly from your subnet CIDRs to every Pod. When a pod starts, the `aws-node` DaemonSet running on that node calls the EC2 API to claim a secondary private IP from an ENI. Your pods are therefore first-class VPC citizens — they can communicate directly with RDS, ElastiCache, Lambda, and on-prem VPN-connected systems without any NAT. But this tight ENI coupling means you are constrained by hard EC2 infrastructure limits that are invisible until you hit them at scale.",
+      "**ENI and IP limits — the hard ceiling that surprises every growing team.** Every EC2 instance type enforces two limits: maximum ENIs attachable and maximum secondary IPs per ENI. A `m5.large` allows 3 ENIs × 10 secondary IPs = **30 pod IPs total**. The kubelet reserves 1 for itself, giving you **29 usable pod slots**. When you try to schedule a 30th pod on that node, the CNI calls EC2, gets an allocation failure, and the pod sits in `ContainerCreating` with event: `FailedCreatePodSandBox: failed to allocate IP address`. This ceiling is invisible in normal operation but becomes a sudden wall during deployments or scale-up events.",
+      "**Prefix Delegation — the zero-downtime 4x capacity multiplier.** Enabling `ENABLE_PREFIX_DELEGATION=true` on the `aws-node` DaemonSet switches IP allocation from individual /32 addresses to /28 CIDR blocks. A /28 block provides 16 IPs but consumes only one 'slot' on the ENI. On a `m5.large`, this transforms capacity from 29 pods to approximately 110 pods — a 4x improvement. Crucially, this change can be applied to a live running cluster with zero node reboots. Only the `aws-node` DaemonSet pods perform a rolling restart, one node at a time. After each node's `aws-node` pod restarts, that node immediately begins allocating from /28 prefix blocks.",
+      "**SNAT port exhaustion — the hardest networking bug to catch.** SNAT (Source Network Address Translation) is performed by the VPC CNI when pods communicate with IPs outside the VPC. The pod's IP (10.0.1.5) is translated to the node's primary IP (10.0.1.100) before leaving via NAT Gateway. Each EC2 instance can hold approximately 64,511 simultaneous outbound SNAT connections. Under high request throughput — thousands of short-lived HTTPS calls per second to Payment APIs, Auth services, or S3 — the SNAT table saturates. Result: `connect: connection timed out` on outbound calls that appear completely random and intermittent, affecting only certain nodes at random times. Hard to reproduce. Common misdiagnosis: assumed to be the external API being flaky. Real fix: size up nodes, spread load to more nodes, or use VPC endpoints for internal AWS service traffic to bypass SNAT entirely.",
+      "**CoreDNS cascade failures — the DNS bottleneck that only appears at 200+ nodes.** Every single DNS lookup from every pod inside the cluster hits the two CoreDNS pods running in `kube-system`. At small scale, two replicas handle the load easily. At 200+ nodes running 2000+ pods, each pod making 10+ DNS lookups per minute, CoreDNS receives 20,000+ queries per minute. CoreDNS pods get OOMKilled trying to handle the load. Remaining pods start receiving `SERVFAIL` or `i/o timeout` on DNS lookups. This manifests as your app 'cannot connect to database' or 'cannot reach internal microservice' — appearing to be an application or network bug when it is actually a DNS infrastructure failure. Fix: (1) `cluster-proportional-autoscaler` scales CoreDNS based on node count. (2) `NodeLocal DNSCache` DaemonSet provides per-node DNS caching, reducing CoreDNS traffic by 70-90%.",
+      "**Security Groups for Pods (SGP) — the hidden density trap.** SGP attaches a dedicated branch ENI to each pod that requires it, enabling per-pod security group enforcement at the VPC layer. This sounds ideal for compliance, but costs you ENI slots: on a `m5.large` with 3 ENIs (1 primary + 2 available for branching), only 2 pods can use SGP simultaneously. Pods 3, 4, 5... stay in `Pending` indefinitely with no clear error message — just `0/N nodes available: N node(s) didn't have free ENI capacity`. Teams enabling SGP without understanding this trap suddenly see seemingly random pod scheduling failures that worsen as the cluster scales. Always use larger instance types (`c5.4xlarge` supports 8 ENIs) or restrict SGP to the specific pods that genuinely require SG enforcement, such as a database-facing API layer."
     ],
     code: `# ================================================================
 # COMPLETE VPC CNI & NETWORK TROUBLESHOOTING PLAYBOOK
@@ -903,11 +911,11 @@ kubectl apply -f https://raw.githubusercontent.com/kubernetes/kubernetes/master/
     time: "Hour 12",
     title: "EKS Troubleshooting Deepdive: Nodes, IAM, IRSA & Scheduling",
     concept: [
-      "**NotReady Node Root Causes — a full diagnostic tree.** When `kubectl get nodes` shows `NotReady`, the `kubelet` has stopped sending heartbeats to the API Server. Controller manager waits 40s before marking NotReady, then 5 minutes before evicting pods. Root causes: (a) **DiskPressure** — root EBS volume hits 85% full; kubelet triggers an eviction loop. Image accumulation and verbose container logs are the most common drivers. (b) **MemoryPressure** — OS-level memory exhaustion. (c) **PIDPressure** — too many processes spawned by container restarts. (d) **Network partition** — SG blocks port 443 outbound from node to EKS API server, preventing heartbeats.",
-      "**DiskPressure deep dive — why it happens and the systemic fix.** Container images accumulate on nodes when the container runtime (containerd) doesn't GC old layers aggressively enough. Also, stdout/stderr logs from containers are written to `/var/log/containers/` on the node — if a single application logs 10MB/s, the disk fills in hours. Fix: (1) Set `imagePullPolicy: IfNotPresent`. (2) Configure `logrotate` in your AMI for container log files. (3) Set kubelet `--image-gc-high-threshold=70` so containerd GCs image layers before DiskPressure triggers.",
-      "**IRSA AccessDenied — five silent failure modes.** (1) **Namespace mismatch**: OIDC trust policy says `system:serviceaccount:production:api-sa` but pod is in `staging` — rejected. (2) **SDK token staleness**: old AWS SDK v1 doesn't auto-refresh the hourly IRSA token; pod gets AccessDenied until restarted. (3) **OIDC provider deleted**: all IRSA fails cluster-wide. (4) **Clock skew**: node NTP drift > 5 minutes makes JWT signature validation fail — happens during DiskPressure events when NTP can't write state files. (5) **Trust policy typo**: subtle mismatch in `StringEquals` condition key silently blocks assume-role calls.",
-      "**Karpenter failure modes explained.** Karpenter calls `ec2:RunInstances`, `ec2:CreateFleet`, `ec2:DescribeInstances`, `sts:GetCallerIdentity`, and `ssm:GetParameter` for AMI resolution. Missing `kms:Decrypt` permission is the most common silent failure — EBS volume encryption triggers a KMS decrypt that Karpenter's role cannot perform. Pods stay in Pending forever with `UnauthorizedOperation` buried deep in Karpenter controller logs.",
-      "**ImagePullBackOff — complete decision tree.** Work through this checklist: (1) Verify the tag actually exists in ECR with `aws ecr list-images`. (2) Check the EC2 node role has `ecr:GetDownloadUrlForLayer`, `ecr:BatchGetImage`, `ecr:GetAuthorizationToken`. (3) Check network path — private subnet nodes require NAT Gateway OR all three ECR VPC Endpoints (`ecr.api`, `ecr.dkr`, `s3`). (4) Check region — cross-region ECR pulls require pull-through cache configuration. (5) Check image mutability — if disabled and you re-pushed same tag, worker might be pulling a stale digest."
+      "**NotReady Nodes — the full diagnostic tree with timing.** When `kubectl get nodes` shows a node as `NotReady`, the kubelet has stopped sending its 10-second heartbeats to the API Server. The controller manager waits 40 seconds (`node-monitor-grace-period`) before marking the node `NotReady`, then waits another 5 minutes (`pod-eviction-timeout`) before evicting pods from it. Understanding this timing prevents premature actions during a network blip. Four root causes: (a) **DiskPressure** — EBS root volume hits 85% capacity; kubelet enters eviction mode. (b) **MemoryPressure** — host OS memory falls below threshold; Linux OOM killer fires. (c) **PIDPressure** — too many processes, often caused by hundreds of crashing containers creating zombie processes. (d) **Network partition** — a Security Group rule blocks TCP 443 outbound from the node to the EKS API server endpoint; the kubelet can't heartbeat even though the node is completely healthy.",
+      "**DiskPressure deep dive — the two root causes and systemic fixes.** DiskPressure is almost always caused by one of two things: (1) **Container image accumulation** — `containerd` pulls images for every deployment but doesn't aggressively GC old layers unless configured. After 20 deployments, a node's 50GB disk fills with stale image layers totaling 30-40GB. (2) **Verbose application logs** — containers write stdout/stderr to `/var/log/containers/` on the node. An app logging 5MB/s fills a 50GB disk in under 3 hours. Neither of these produces any application error or alert until the disk hits the eviction threshold. Systemic fixes: set `imagePullPolicy: IfNotPresent`, configure `/etc/logrotate.d/containers` in your AMI to rotate logs at 100MB, and set kubelet `--image-gc-high-threshold=70` (GC at 70% disk, well before the 85% DiskPressure trigger).",
+      "**IRSA AccessDenied — the five silent failure modes that experts miss.** IRSA is the right approach for AWS access, but it has five non-obvious ways to silently fail: (1) **Namespace mismatch** — the IAM trust policy `Condition` specifies `system:serviceaccount:production:api-sa`, but the pod was accidentally deployed to the `staging` namespace. AWS STS rejects the assume-role call with no explanation. The pod falls back to the EC2 node role, which has no application permissions, and gets AccessDenied. (2) **AWS SDK v1 staleness** — IRSA tokens expire every hour. AWS SDK v2 auto-refreshes. AWS SDK v1 does not. A pod with SDK v1 silently uses a stale token until it is restarted. (3) **OIDC provider accidentally deleted** — all IRSA across the entire cluster fails simultaneously. (4) **NTP clock skew** — AWS STS validates JWT tokens based on timestamp; if the node clock drifts beyond 5 minutes (which happens during DiskPressure events when NTP cannot write its state file to the full disk), every IRSA token is rejected with a cryptic 'invalid signature' error. (5) **Trust policy condition typo** — a `StringLike` vs `StringEquals` mistake, or an extra slash in the OIDC URL, silently blocks all assume-role calls.",
+      "**Karpenter failure modes — the five AWS API calls Karpenter must succeed at.** To provision a node, Karpenter must successfully call: (1) `ec2:DescribeInstanceTypes` to find suitable instances; (2) `ec2:CreateFleet` or `ec2:RunInstances` to launch the EC2 instance; (3) `sts:GetCallerIdentity` to confirm its own identity; (4) `ssm:GetParameter` to resolve the latest EKS-optimized AMI ID; (5) `kms:Decrypt` if the launch template uses encrypted EBS volumes. Missing any single permission causes Karpenter to fail silently — pods remain in `Pending`, and the only evidence is a buried log line in Karpenter's controller pod: `ERROR ... UnauthorizedOperation`. Teams see the Karpenter pod running normally but assume it is working. Always check `kubectl logs -n kube-system -l app.kubernetes.io/name=karpenter | grep -i error` before assuming a scheduling or resource issue.",
+      "**ImagePullBackOff — the complete 5-step decision tree.** `ImagePullBackOff` means `containerd` tried to pull the image and failed. Walk this list in order: (1) **Tag exists?** Run `aws ecr list-images --repository-name <name>` to confirm the exact tag exists in ECR. Typos in the tag or a failed CI push are the most common cause. (2) **Node IAM permissions?** The EC2 node role needs exactly these three ECR permissions: `ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`. Missing even one fails all ECR pulls. (3) **Network path?** Nodes in private subnets need either a NAT Gateway to reach public ECR, OR three VPC Interface Endpoints: `com.amazonaws.region.ecr.api`, `com.amazonaws.region.ecr.dkr`, and `com.amazonaws.region.s3` (for image layer storage). Missing the S3 endpoint is a common oversight — the ECR auth succeeds but layer download fails. (4) **Cross-region?** ECR images are regional. Pulling from `us-east-1` ECR in a `eu-west-1` cluster requires a pull-through cache configuration. (5) **Image mutability?** If ECR image tag mutability is disabled and you pushed a new image with the same tag, the manifest digest changed silently. Some caching layers may serve the old digest. The solution is to always push with unique immutable tags (commit SHA)."
     ],
     code: `# ================================================================
 # COMPLETE NODE / IAM / SCHEDULING TROUBLESHOOTING PLAYBOOK

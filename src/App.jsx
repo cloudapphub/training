@@ -1,3 +1,4 @@
+import AwsCloudTraining from './AwsCloudTraining'
 import { Routes, Route } from 'react-router-dom'
 import TrainingHome from './TrainingHome'
 import PythonOneDay from './PythonOneDay'
@@ -19,6 +20,9 @@ import SpringBootTraining from './SpringBootTraining'
 import DbTuningTraining from './DbTuningTraining'
 import FastApiTraining from './FastApiTraining'
 import DevOpsTraining from './DevOpsTraining'
+import K8sBasicsTraining from './K8sBasicsTraining'
+import CloudFormationTraining from './CloudFormationTraining'
+import EksCfnTraining from './EksCfnTraining'
 
 export default function App() {
   return (
@@ -43,6 +47,10 @@ export default function App() {
       <Route path="/db-tuning" element={<DbTuningTraining />} />
       <Route path="/fastapi" element={<FastApiTraining />} />
       <Route path="/devops" element={<DevOpsTraining />} />
+      <Route path="/k8s-basics" element={<K8sBasicsTraining />} />
+      <Route path="/cloudformation" element={<CloudFormationTraining />} />
+      <Route path="/eks-cfn" element={<EksCfnTraining />} />
+      <Route path="/aws-cloud" element={<AwsCloudTraining />} />
     </Routes>
   )
 }

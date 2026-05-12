@@ -1,8 +1,23 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag, Layers, Key, DatabaseZap, TerminalSquare } from "lucide-react";
+import { GraduationCap, Clock, ArrowRight, Sparkles, Code2, Brain, Search, Server, CloudUpload, Database, FileCode, Boxes, Shield, Workflow, ShoppingBag, Layers, Key, DatabaseZap, TerminalSquare, Cloud } from "lucide-react";
+
 
 const courses = [
+  {
+    id: "aws-cloud",
+    path: "/aws-cloud",
+    title: "AWS Cloud Foundations",
+    subtitle: "Accounts, Regions, AZs, IAM & CloudWatch",
+    description:
+      "Start here. Three foundational hours covering AWS global infrastructure (accounts, Organizations, Regions, AZs), IAM in depth — users, groups, roles, service roles, policies — and Amazon CloudWatch for logs, metrics, alarms, dashboards and Logs Insights with real Terraform and CLI examples.",
+    duration: "3 hours (growing)",
+    lessons: 3,
+    icon: Cloud,
+    gradient: "from-orange-500 via-amber-500 to-yellow-400",
+    glowColor: "rgba(251,146,60,0.15)",
+    tags: ["Accounts", "Regions", "IAM Roles", "CloudWatch Logs", "Alarms", "Logs Insights"],
+  },
   {
     id: "python-one-day",
     path: "/python-one-day",
@@ -254,6 +269,48 @@ const courses = [
     gradient: "from-emerald-500 via-teal-500 to-cyan-500",
     glowColor: "rgba(20,184,166,0.15)",
     tags: ["FastAPI", "Async", "WebSockets", "SSE", "Pydantic", "React"],
+  },
+  {
+    id: "eks-cfn",
+    path: "/eks-cfn",
+    title: "EKS + CloudFormation",
+    subtitle: "Secure 3-Tier App Deployment",
+    description:
+      "8 end-to-end lessons deploying a production-grade 3-tier app on EKS using CloudFormation. Covers VPC foundation, EKS cluster & node groups, IRSA, Aurora PostgreSQL, Secrets Store CSI Driver, ALB Ingress with TLS, HPA, PDB, topology spread constraints, and container image deployment to ECR. Includes DevOps interview Q&A.",
+    duration: "8 hours",
+    lessons: 8,
+    icon: Boxes,
+    gradient: "from-blue-600 via-blue-500 to-cyan-400",
+    glowColor: "rgba(37,99,235,0.15)",
+    tags: ["EKS", "CloudFormation", "IRSA", "Aurora", "ALB", "HPA", "Secrets CSI"],
+  },
+  {
+    id: "cloudformation",
+    path: "/cloudformation",
+    title: "AWS CloudFormation",
+    subtitle: "IaC Mastery + DevOps Interview Prep",
+    description:
+      "10 deep-dive lessons covering template anatomy, intrinsic functions, Change Sets, Nested Stacks, StackSets (SERVICE_MANAGED vs SELF_MANAGED), Drift Detection, Custom Resources, cfn-lint, and CloudFormation Guard. Includes a full Interview Q&A page with tips for AWS DevOps roles.",
+    duration: "10 hours",
+    lessons: 10,
+    icon: FileCode,
+    gradient: "from-orange-500 via-amber-500 to-yellow-400",
+    glowColor: "rgba(249,115,22,0.15)",
+    tags: ["Templates", "StackSets", "Change Sets", "Drift", "Custom Resources", "cfn-guard"],
+  },
+  {
+    id: "k8s-basics",
+    path: "/k8s-basics",
+    title: "Kubernetes Basics",
+    subtitle: "First Timer's Complete Guide",
+    description:
+      "Eight hands-on lessons taking you from zero to confident with Kubernetes. Learn Pods, Deployments, Services, ConfigMaps, Secrets, Namespaces, Resource Requests & Limits, and Health Probes — all explained simply with real kubectl commands and practice exercises.",
+    duration: "8 hours",
+    lessons: 8,
+    icon: Boxes,
+    gradient: "from-cyan-500 via-sky-400 to-blue-500",
+    glowColor: "rgba(6,182,212,0.15)",
+    tags: ["Pods", "Deployments", "Services", "ConfigMaps", "Namespaces", "Health Probes"],
   },
   {
     id: "devops-concepts",
